@@ -11,6 +11,7 @@ import (
 
 	"github.com/emdzej/airlock/internal/devices"
 	"github.com/emdzej/airlock/internal/format"
+	"github.com/emdzej/airlock/internal/fsck"
 	"github.com/emdzej/airlock/internal/label"
 	"github.com/emdzej/airlock/internal/mount"
 )
@@ -75,6 +76,7 @@ type partitionPayload struct {
 	CanRelabel  bool   `json:"can_relabel"`          // fs supports airlock relabel
 	MaxLabelLen int    `json:"max_label_len"`        // 0 if no relabel support
 	CanMount    bool   `json:"can_mount"`            // FS supported and not currently mounted
+	CanFsck     bool   `json:"can_fsck"`             // FS supports airlock fsck
 }
 
 func (s *Server) devicePayload(d devices.Device) devicePayload {
@@ -104,6 +106,7 @@ func (s *Server) devicePayload(d devices.Device) devicePayload {
 			CanRelabel:  !d.ReadOnly && label.SupportedForFS(p.FSType),
 			MaxLabelLen: label.MaxLenForFS(p.FSType),
 			CanMount:    !p.IsAirlock && p.MountPoint == "" && mount.SupportedFilesystems[normalizeFSName(p.FSType)],
+			CanFsck:     fsck.SupportedForFS(p.FSType),
 		})
 	}
 	suggested := "vfat"

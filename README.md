@@ -13,6 +13,34 @@ just wants a tidy way to move files off a card without hunting for a reader.
                        smb://airlock              airlock.local
                        http://airlock/
 
+## Why the name
+
+Borrowed from spacecraft and cleanrooms: an *airlock* is the intermediate
+compartment that isolates two environments while goods pass between them.
+That's exactly the security posture here.
+
+- The **untrusted USB media** — someone else's thumb drive, a card of
+  unknown provenance, a booby-trapped stick — plugs into the Pi. Not
+  into your primary machine.
+- Every mount uses `nosuid,nodev,noexec`; nothing on the drive can execute,
+  gain privileges, or open a device node on the Pi.
+- Airlock never auto-runs anything from the media. Linux has no
+  `autorun.inf`; we don't scan-and-execute anything either.
+- **BadUSB / USB Rubber Ducky** attacks (a drive that pretends to be a
+  keyboard) land on a headless Pi with no interactive session to type
+  into — not on your laptop where they'd do damage. Optional
+  `AIRLOCK_HARDEN_USB=1` refuses HID and CDC-* USB drivers entirely.
+- Kernel filesystem-parser CVEs (rare but real for FAT / NTFS / exFAT /
+  HFS+) are hitting a $50 Pi you can reflash, not the machine you
+  actually work on.
+
+You still have to be careful with **file content** — a booby-trapped PDF
+or macro-laden Excel document is Airlock's cargo, not its concern. Endpoint
+hygiene (AV, sandbox, Gatekeeper, whatever's on your side) still matters.
+Airlock is the isolation chamber; it's not a scanner. See [`docs/install.md`](docs/install.md)
+under **Additional hardening** for the full posture and the two optional
+tightening levels.
+
 ## Status
 
 Version **0.2.0** — first tag. Runs on real hardware (Raspberry Pi 4 on

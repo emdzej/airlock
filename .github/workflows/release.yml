@@ -98,3 +98,78 @@ jobs:
             dist/airlockd-${{ steps.tag.outputs.tag }}-linux-arm64.tar.gz.sha256
             dist/airlock-${{ steps.tag.outputs.tag }}-bundle.tar.gz
             scripts/install.sh
+
+  image:
+    name: Build flashable pi-gen image
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+          cache: true
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build arm64 binary for image
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p bin
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o bin/airlockd.arm64 \
+            ./cmd/airlockd
+
+      - name: Free disk space
+        run: |
+          # pi-gen needs ~15 GB free; GHA ubuntu runners ship with
+          # ~14 GB. Nuke default toolchains we don't need.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache \
+                      /usr/local/lib/android /usr/local/share/boost || true
+          df -h /
+
+      - name: Build image with pi-gen
+        env:
+          PIGEN_REF: master
+        run: |
+          ./image/pi-gen/build.sh
+
+      - name: Package image
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p dist
+          SRC=$(ls image/pi-gen/.pi-gen/deploy/*.img.xz 2>/dev/null | head -1)
+          if [ -z "$SRC" ]; then
+              echo "pi-gen did not produce a .img.xz — build likely failed" >&2
+              ls -la image/pi-gen/.pi-gen/deploy/ >&2 || true
+              exit 1
+          fi
+          DST="dist/airlock-${VERSION}-linux-arm64.img.xz"
+          cp "$SRC" "$DST"
+          sha256sum "$DST" > "${DST}.sha256"
+          ls -lh "$DST" "${DST}.sha256"
+
+      - name: Attach image to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/airlock-${{ steps.tag.outputs.tag }}-linux-arm64.img.xz
+            dist/airlock-${{ steps.tag.outputs.tag }}-linux-arm64.img.xz.sha256

@@ -16,6 +16,7 @@ import (
 
 	"github.com/emdzej/airlock/internal/flash"
 	"github.com/emdzej/airlock/internal/format"
+	"github.com/emdzej/airlock/internal/fsck"
 	"github.com/emdzej/airlock/internal/mount"
 )
 
@@ -36,6 +37,7 @@ type Server struct {
 	mgr     *mount.Manager
 	fmtr    *format.Formatter
 	flsh    *flash.Flasher
+	fsck    *fsck.Checker
 	tmpl    *template.Template
 	onBusy  BusyFunc
 	version string
@@ -57,6 +59,7 @@ func New(mgr *mount.Manager, onBusy BusyFunc, version string) (*Server, error) {
 		mgr:     mgr,
 		fmtr:    format.New(mgr),
 		flsh:    flash.New(mgr),
+		fsck:    fsck.New(mgr),
 		tmpl:    tmpl,
 		onBusy:  onBusy,
 		version: version,
@@ -104,9 +107,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/devices/{parent}/eject", s.handleDeviceEject)
 	mux.HandleFunc("POST /api/devices/{parent}/format", s.handleFormat)
 	mux.HandleFunc("POST /api/devices/{parent}/flash", s.handleFlash)
+	mux.HandleFunc("GET /api/devices/{parent}/dump", s.handleDump)
 	// Partition-level operations
 	mux.HandleFunc("POST /api/partitions/{name}/label", s.handleSetLabel)
 	mux.HandleFunc("POST /api/partitions/{name}/mount", s.handleMountPartition)
+	mux.HandleFunc("POST /api/partitions/{name}/fsck", s.handleFsck)
 	// Devices HTML page
 	mux.HandleFunc("GET /devices", s.handleDevicesPage)
 	return mux

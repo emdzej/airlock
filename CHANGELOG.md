@@ -14,6 +14,30 @@ faster to boot, safer to compromise, and more visible in the Devices tab.
 
 ### Added
 
+- **Dump a device to a disk image** (new). Devices tab gets a **Dump…**
+  button; pick a compression (xz / gz / none) and the browser streams
+  the raw block device down as a downloadable image with a generated
+  filename (`airlock-<label>-<date>.img[.xz|.gz]`). Read-only op —
+  `sync()` first, then `os.Open("/dev/<parent>")`, pipe through the
+  compressor (`xz -c -T 0` for parallel or stdlib `compress/gzip`),
+  write straight to the response body. No unmount, so SMB sessions
+  aren't disturbed. Endpoint: `GET /api/devices/{parent}/dump?compression=…`.
+- **fsck per partition** (new). Devices tab gets a **Check** button on
+  every partition with a supported filesystem. Modal picks Check
+  (read-only) or Repair (auto-fix, `-p` / `-a` / `-y` per tool),
+  unmounts, runs `e2fsck` / `fsck.vfat` / `fsck.exfat` / `ntfsfix` /
+  `fsck.hfsplus`, streams stdout+stderr live via SSE into a scrollable
+  log in the modal, remounts. Endpoint:
+  `POST /api/partitions/{name}/fsck?mode=check|repair`.
+- **`stage-airlock/06-fast-boot`**: pi-gen sub-stage that bakes the
+  same service disables + `dtoverlay=disable-bt` we ship in
+  `AIRLOCK_FAST_BOOT=1` directly into the image. Fresh flashes boot in
+  ~14 s without needing the installer flag.
+- **Release workflow now builds `.img.xz`**: tagging `x.y.z` now runs
+  a second CI job (~45 min) that clones pi-gen inside GitHub Actions,
+  syncs `stage-airlock/`, produces the flashable image, and attaches
+  `airlock-<tag>-linux-arm64.img.xz` + sha256 to the same GitHub
+  Release alongside the binary tarball + install bundle.
 - **Flash OS images to a drive** (new). Devices tab gets a **Flash…**
   button; the modal takes a `.img`, `.img.xz`, or `.img.gz` file, streams
   the upload through the appropriate decompressor (`xz -dc` or stdlib

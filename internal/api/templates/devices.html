@@ -81,6 +81,54 @@
     <div class="status" id="status">Loading…</div>
     <div id="devices" class="devices"></div>
 
+    <dialog id="dump-dialog" class="format-dlg">
+        <h2>Download disk image</h2>
+        <div class="fmt-block" id="dump-device"></div>
+        <div class="fmt-block">
+            <div>Compression</div>
+            <div class="fmt-fs">
+                <label><input type="radio" name="dump-comp" value="xz" checked> xz
+                    <small>smallest file, mostly-empty cards compress hard</small></label>
+                <label><input type="radio" name="dump-comp" value="gz"> gzip
+                    <small>faster, decent compression</small></label>
+                <label><input type="radio" name="dump-comp" value="none"> none
+                    <small>raw .img — biggest, no CPU cost</small></label>
+            </div>
+        </div>
+        <div class="fmt-block" style="font-size:11px;color:#888;">
+            Read-only. Partitions stay mounted; recent writes are
+            flushed first. For a perfectly clean snapshot, eject the
+            device before dumping.
+        </div>
+        <div class="dlg-actions">
+            <button type="button" id="dump-cancel">Cancel</button>
+            <button type="button" id="dump-start" class="btn primary">Download</button>
+        </div>
+    </dialog>
+
+    <dialog id="fsck-dialog" class="format-dlg">
+        <h2>Check filesystem</h2>
+        <div class="fmt-block" id="fsck-target"></div>
+        <div class="fmt-block">
+            <div>Mode</div>
+            <div class="fmt-fs">
+                <label><input type="radio" name="fsck-mode" value="check" checked> Check only
+                    <small>read-only; won't modify the filesystem</small></label>
+                <label><input type="radio" name="fsck-mode" value="repair"> Repair
+                    <small>auto-fix issues (safe preen mode where supported)</small></label>
+            </div>
+        </div>
+        <div id="fsck-progress" hidden>
+            <div class="fmt-block">
+                <pre id="fsck-log" style="max-height:220px;overflow:auto;background:#111;color:#eee;padding:8px;border-radius:4px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;white-space:pre-wrap;"></pre>
+            </div>
+        </div>
+        <div class="dlg-actions">
+            <button type="button" id="fsck-cancel">Close</button>
+            <button type="button" id="fsck-start" class="btn primary">Check</button>
+        </div>
+    </dialog>
+
     <dialog id="flash-dialog" class="format-dlg">
         <h2>Flash image to device</h2>
         <div class="fmt-warn">
@@ -260,6 +308,11 @@
             if (flash.disabled) flash.title = "Cannot flash: partition is read-only";
             flash.onclick = () => openFlashDialog(d);
             actions.appendChild(flash);
+            const dump = document.createElement("button");
+            dump.textContent = "Dump…";
+            dump.title = "Download the whole device as a disk image";
+            dump.onclick = () => openDumpDialog(d);
+            actions.appendChild(dump);
             head.appendChild(actions);
             el.appendChild(head);
 
@@ -332,6 +385,13 @@
                 btn.textContent = "Rename";
                 btn.title = "Change the volume label";
                 btn.onclick = () => openRelabel(p);
+                action.appendChild(btn);
+            }
+            if (p.can_fsck) {
+                const btn = document.createElement("button");
+                btn.textContent = "Check";
+                btn.title = "Check the filesystem for errors";
+                btn.onclick = () => openFsck(p);
                 action.appendChild(btn);
             }
             li.appendChild(action);
@@ -607,6 +667,101 @@
             $("flash-cancel").disabled = false;
         }
         // ---- end Flash dialog ----
+
+        // ---- Dump dialog ----
+        let dumpDevice = null;
+        function openDumpDialog(d) {
+            dumpDevice = d;
+            const title = [d.vendor, d.model].filter(Boolean).join(" ").trim() || d.name;
+            $("dump-device").textContent = `${title} (/dev/${d.name}) — ${d.size_human}`;
+            document.querySelector('input[name="dump-comp"][value="xz"]').checked = true;
+            $("dump-dialog").showModal();
+        }
+        $("dump-cancel").onclick = () => $("dump-dialog").close();
+        $("dump-start").onclick = () => {
+            if (!dumpDevice) return;
+            const comp = document.querySelector('input[name="dump-comp"]:checked').value;
+            const url = `/api/devices/${encodeURIComponent(dumpDevice.name)}/dump?compression=${comp}`;
+            // Trigger the browser's own download flow. Content-Disposition
+            // on the response drives the filename.
+            window.location = url;
+            $("dump-dialog").close();
+        };
+        // ---- end Dump dialog ----
+
+        // ---- Fsck dialog ----
+        let fsckPartition = null;
+        function openFsck(p) {
+            fsckPartition = p;
+            $("fsck-target").textContent =
+                `/dev/${p.name} (${p.fs_type}${p.label ? ", " + p.label : ""})`;
+            document.querySelector('input[name="fsck-mode"][value="check"]').checked = true;
+            $("fsck-log").textContent = "";
+            $("fsck-progress").hidden = true;
+            $("fsck-start").disabled = false;
+            $("fsck-start").textContent = "Check";
+            $("fsck-cancel").textContent = "Cancel";
+            $("fsck-dialog").showModal();
+        }
+        $("fsck-cancel").onclick = () => $("fsck-dialog").close();
+        $("fsck-start").onclick = () => runFsck();
+
+        async function runFsck() {
+            if (!fsckPartition) return;
+            const mode = document.querySelector('input[name="fsck-mode"]:checked').value;
+            $("fsck-progress").hidden = false;
+            $("fsck-log").textContent = "";
+            $("fsck-start").disabled = true;
+            $("fsck-start").textContent = mode === "repair" ? "Repairing…" : "Checking…";
+            $("fsck-cancel").disabled = true;
+
+            const url = `/api/partitions/${encodeURIComponent(fsckPartition.name)}/fsck?mode=${mode}`;
+            let res;
+            try {
+                res = await fetch(url, {method: "POST"});
+                if (!res.ok) throw new Error(await res.text());
+            } catch (e) {
+                appendFsckLine("Error: " + e.message);
+                $("fsck-start").disabled = false;
+                $("fsck-cancel").disabled = false;
+                $("fsck-cancel").textContent = "Close";
+                return;
+            }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+            try {
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, {stream: true});
+                    let idx;
+                    while ((idx = buf.indexOf("\n\n")) >= 0) {
+                        const chunk = buf.slice(0, idx);
+                        buf = buf.slice(idx + 2);
+                        const line = chunk.split("\n").find(l => l.startsWith("data: "));
+                        if (!line) continue;
+                        let ev;
+                        try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+                        if (ev.stage === "line") appendFsckLine(ev.message || "");
+                        else if (ev.message) appendFsckLine(`[${ev.stage}] ${ev.message}`);
+                    }
+                }
+            } catch (e) {
+                appendFsckLine("Stream error: " + e.message);
+            }
+            $("fsck-start").disabled = false;
+            $("fsck-start").textContent = "Run again";
+            $("fsck-cancel").disabled = false;
+            $("fsck-cancel").textContent = "Close";
+            lastSig = ""; load(true);
+        }
+        function appendFsckLine(text) {
+            const log = $("fsck-log");
+            log.textContent += (log.textContent ? "\n" : "") + text;
+            log.scrollTop = log.scrollHeight;
+        }
+        // ---- end Fsck dialog ----
         $("fmt-confirm-input").oninput = (e) => {
             const word = $("fmt-confirm-word").textContent;
             $("fmt-submit").disabled = e.target.value !== word;
