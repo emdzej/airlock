@@ -1,6 +1,5 @@
 samba
 samba-common-bin
-samba-vfs-modules
 avahi-daemon
 libnss-mdns
 exfatprogs

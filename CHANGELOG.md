@@ -90,16 +90,17 @@ faster to boot, safer to compromise, and more visible in the Devices tab.
 
 ### Fixed
 
-- **Finder rendered airlock as a monitor/computer icon** in the Network
-  sidebar despite our `_device-info._tcp` advertisement. Root cause:
-  Samba's own mDNS publisher shipped a competing record under the
-  NetBIOS name (`AIRLOCK`) with `model=MacSamba`, which Apple has no
-  icon mapping for, and Finder was picking that one. Set
-  `multicast dns register = no` in `smb.conf` to suppress Samba's
-  publisher, and switched the Avahi model to
-  `MacPro7,1@ECOLOR=226,226,224` — the same string TrueNAS uses to get
-  a proper Mac Pro tower icon in the sidebar. (After the fix, `killall
-  Finder` may be needed once to drop the cached icon.)
+- **Duplicate mDNS advertisement removed.** Samba's built-in mDNS
+  publisher was shipping a competing `_device-info._tcp` (and
+  `_smb._tcp`) record under the NetBIOS name `AIRLOCK` with
+  `model=MacSamba`, which shadowed the record our Avahi service
+  publishes. Suppressed via `multicast dns register = no` in
+  `smb.conf`. The Avahi service still advertises
+  `_device-info._tcp` with `model=MacPro7,1@ECOLOR=226,226,224`; the
+  actual icon Finder draws depends on macOS's undocumented icon
+  table, and reliably matching a specific "network storage"
+  appearance (e.g. TrueNAS's) requires macOS-side vendor recognition
+  we can't advertise.
 - **SMB shares appeared empty when the systemd sandbox created a private
   mount namespace.** `ProtectSystem=strict` + `ReadWritePaths` bind-mounted
   `/mnt/airlock` into the service's own namespace as slave, so mounts
