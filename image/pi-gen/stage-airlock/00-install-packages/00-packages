@@ -10,3 +10,4 @@ gdisk
 parted
 udev
 overlayroot
+xz-utils

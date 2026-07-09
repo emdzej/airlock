@@ -14,6 +14,17 @@ faster to boot, safer to compromise, and more visible in the Devices tab.
 
 ### Added
 
+- **Flash OS images to a drive** (new). Devices tab gets a **Flash…**
+  button; the modal takes a `.img`, `.img.xz`, or `.img.gz` file, streams
+  the upload through the appropriate decompressor (`xz -dc` or stdlib
+  `compress/gzip`) straight onto `/dev/<parent>` in 4 MB blocks with
+  per-500 ms SSE progress events. Zero intermediate storage — a 3 GB Pi
+  OS image never lands on the airlock SD, only on the target. Adds
+  `xz-utils` to the installer's package list and the pi-gen stage.
+  Endpoint: `POST /api/devices/{parent}/flash?compression=none|xz|gz`
+  (raw body, `text/event-stream` response). Safety-gated to USB
+  devices, uses the same quarantine mechanism as format so the daemon
+  doesn't auto-mount the fresh partition table mid-write.
 - **Mount button** on the Devices tab for USB partitions that have a
   supported filesystem but aren't currently mounted by airlock. Backed
   by `POST /api/partitions/{name}/mount` — safety-gated to USB-attached

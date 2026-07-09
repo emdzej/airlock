@@ -81,6 +81,42 @@
     <div class="status" id="status">Loading…</div>
     <div id="devices" class="devices"></div>
 
+    <dialog id="flash-dialog" class="format-dlg">
+        <h2>Flash image to device</h2>
+        <div class="fmt-warn">
+            This will <b>overwrite the entire device</b> with the image
+            you select. Every partition on it will be destroyed.
+            Cannot be undone.
+        </div>
+        <div class="fmt-block">
+            <div id="flash-device"></div>
+        </div>
+        <div class="fmt-block">
+            <label>Image file (.img / .iso / .img.xz / .img.gz)<br>
+                <input id="flash-file" type="file" accept=".img,.iso,.xz,.gz">
+            </label>
+            <div id="flash-file-info" style="font-size:11px;color:#888;margin-top:4px;"></div>
+        </div>
+        <div class="fmt-block">
+            <label>To confirm, type <b><span id="flash-confirm-word"></span></b><br>
+                <input id="flash-confirm-input" type="text" autocomplete="off">
+            </label>
+        </div>
+        <div id="flash-progress" hidden>
+            <div class="fmt-block">
+                <div id="flash-stage" class="fmt-stage"></div>
+                <div class="progress-bar" style="height:6px;background:#eee;border-radius:3px;margin-top:10px;overflow:hidden;">
+                    <div id="flash-fill" style="height:100%;width:0;background:#06c;transition:width 0.2s;"></div>
+                </div>
+                <div id="flash-stats" style="font-size:11px;color:#888;margin-top:4px;"></div>
+            </div>
+        </div>
+        <div class="dlg-actions">
+            <button type="button" id="flash-cancel">Cancel</button>
+            <button type="button" id="flash-submit" class="danger" disabled>Flash</button>
+        </div>
+    </dialog>
+
     <dialog id="relabel-dialog">
         <h2>Rename volume</h2>
         <form id="relabel-form">
@@ -217,6 +253,13 @@
             if (fmt.disabled) fmt.title = "Cannot format: partition is read-only";
             fmt.onclick = () => openFormatDialog(d);
             actions.appendChild(fmt);
+            const flash = document.createElement("button");
+            flash.className = "danger";
+            flash.textContent = "Flash…";
+            flash.disabled = d.any_partition_read_only;
+            if (flash.disabled) flash.title = "Cannot flash: partition is read-only";
+            flash.onclick = () => openFlashDialog(d);
+            actions.appendChild(flash);
             head.appendChild(actions);
             el.appendChild(head);
 
@@ -402,6 +445,168 @@
         }
 
         $("fmt-cancel").onclick = () => $("format-dialog").close();
+
+        // ---- Flash-image dialog wiring ----
+        let flashDevice = null;
+        let flashCompression = "none";
+
+        function detectCompression(name) {
+            const n = name.toLowerCase();
+            if (n.endsWith(".xz")) return "xz";
+            if (n.endsWith(".gz") || n.endsWith(".gzip")) return "gz";
+            return "none";
+        }
+
+        function openFlashDialog(d) {
+            flashDevice = d;
+            const title = [d.vendor, d.model].filter(Boolean).join(" ").trim() || d.name;
+            $("flash-device").textContent = `${title} (/dev/${d.name}) — ${d.size_human}`;
+            const anyLabel = d.partitions.map(p => p.label).find(Boolean);
+            $("flash-confirm-word").textContent = anyLabel || "FLASH";
+            $("flash-confirm-input").value = "";
+            $("flash-file").value = "";
+            $("flash-file-info").textContent = "";
+            $("flash-progress").hidden = true;
+            $("flash-stage").classList.remove("err");
+            $("flash-stage").textContent = "";
+            $("flash-fill").style.width = "0%";
+            $("flash-stats").textContent = "";
+            $("flash-submit").disabled = true;
+            $("flash-submit").textContent = "Flash";
+            $("flash-cancel").disabled = false;
+            flashCompression = "none";
+            $("flash-dialog").showModal();
+        }
+        $("flash-cancel").onclick = () => $("flash-dialog").close();
+
+        $("flash-file").onchange = (e) => {
+            const f = e.target.files[0];
+            if (!f) { $("flash-file-info").textContent = ""; return; }
+            flashCompression = detectCompression(f.name);
+            $("flash-file-info").textContent =
+                `${humanBytes(f.size)}` +
+                (flashCompression !== "none"
+                    ? ` — will decompress on the Pi (${flashCompression})`
+                    : "");
+            // Cheap sanity check: for uncompressed images, warn if bigger than device.
+            if (flashCompression === "none" && flashDevice && f.size > flashDevice.size_bytes) {
+                $("flash-file-info").textContent += ` — LARGER THAN DEVICE (${flashDevice.size_human})`;
+                $("flash-file-info").style.color = "#a10000";
+            } else {
+                $("flash-file-info").style.color = "#888";
+            }
+            maybeEnableFlashSubmit();
+        };
+        function maybeEnableFlashSubmit() {
+            const wordOk = $("flash-confirm-input").value === $("flash-confirm-word").textContent;
+            const fileOk = $("flash-file").files.length > 0;
+            $("flash-submit").disabled = !(wordOk && fileOk);
+        }
+        $("flash-confirm-input").oninput = maybeEnableFlashSubmit;
+
+        $("flash-submit").onclick = startFlash;
+
+        function humanBytes(b) {
+            if (b < 1000) return b + " B";
+            const units = ["kB", "MB", "GB", "TB"];
+            let n = b, i = -1;
+            do { n /= 1000; i++; } while (n >= 1000 && i < units.length - 1);
+            return n.toFixed(1) + " " + units[i];
+        }
+
+        function startFlash() {
+            const file = $("flash-file").files[0];
+            if (!file || !flashDevice) return;
+            $("flash-progress").hidden = false;
+            $("flash-stage").classList.remove("err");
+            $("flash-stage").textContent = "Starting…";
+            $("flash-fill").style.width = "0%";
+            $("flash-stats").textContent = "";
+            $("flash-submit").disabled = true;
+            $("flash-submit").textContent = "Flashing…";
+            $("flash-cancel").disabled = true;
+
+            const url = `/api/devices/${encodeURIComponent(flashDevice.name)}/flash?compression=${flashCompression}`;
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", url);
+            xhr.setRequestHeader("Content-Type", "application/octet-stream");
+
+            // Upload progress: the browser knows how many bytes it sent.
+            let uploadedBytes = 0;
+            let uploadTotal = file.size;
+            xhr.upload.onprogress = (ev) => {
+                if (!ev.lengthComputable) return;
+                uploadedBytes = ev.loaded;
+                uploadTotal = ev.total;
+                updateFlashBar();
+            };
+
+            // Response progress: SSE events arrive as bytes on the response
+            // stream. Poll responseText, parse the "data: {…}\n\n" chunks
+            // we haven't seen yet.
+            let sseCursor = 0;
+            let writtenBytes = 0;
+            let lastStage = "";
+            xhr.onprogress = () => {
+                const fresh = xhr.responseText.substring(sseCursor);
+                sseCursor = xhr.responseText.length;
+                const chunks = fresh.split("\n\n");
+                for (const chunk of chunks) {
+                    const dataLine = chunk.split("\n").find(l => l.startsWith("data: "));
+                    if (!dataLine) continue;
+                    let ev;
+                    try { ev = JSON.parse(dataLine.slice(6)); } catch { continue; }
+                    if (ev.stage) lastStage = ev.stage;
+                    if (ev.message) $("flash-stage").textContent = ev.message;
+                    else $("flash-stage").textContent = lastStage;
+                    if (typeof ev.written === "number") writtenBytes = ev.written;
+                    updateFlashBar();
+                    if (ev.stage === "error") { flashError(ev.message || "unknown"); return; }
+                    if (ev.stage === "done") {
+                        $("flash-fill").style.width = "100%";
+                        $("flash-stats").textContent = `Wrote ${humanBytes(writtenBytes)}`;
+                        setTimeout(() => { $("flash-dialog").close(); lastSig = ""; load(true); }, 1500);
+                        return;
+                    }
+                }
+            };
+
+            function updateFlashBar() {
+                // Two known quantities: upload progress and server-side
+                // write progress. For an uncompressed image these track
+                // 1:1. For xz/gz the "written" is bigger than what we've
+                // uploaded (decompressed bytes). Take whichever is
+                // further along as our progress signal.
+                const uploadPct = uploadTotal > 0 ? (uploadedBytes / uploadTotal) * 100 : 0;
+                const writtenPct = flashDevice.size_bytes > 0
+                    ? (writtenBytes / flashDevice.size_bytes) * 100 : 0;
+                const pct = Math.min(99, Math.max(uploadPct, writtenPct));
+                $("flash-fill").style.width = pct + "%";
+                const parts = [];
+                if (writtenBytes > 0) parts.push(`written ${humanBytes(writtenBytes)}`);
+                if (uploadTotal > 0)  parts.push(`uploaded ${humanBytes(uploadedBytes)} / ${humanBytes(uploadTotal)}`);
+                $("flash-stats").textContent = parts.join(" · ");
+            }
+
+            xhr.onerror = () => flashError("network error");
+            xhr.onload = () => {
+                // If SSE never delivered a done/error, the response
+                // ended without a terminal — best-effort refresh.
+                if (lastStage !== "done" && lastStage !== "error") {
+                    flashError("flash ended without a terminal event");
+                }
+            };
+            xhr.send(file);
+        }
+
+        function flashError(msg) {
+            $("flash-stage").classList.add("err");
+            $("flash-stage").textContent = msg;
+            $("flash-submit").disabled = false;
+            $("flash-submit").textContent = "Flash";
+            $("flash-cancel").disabled = false;
+        }
+        // ---- end Flash dialog ----
         $("fmt-confirm-input").oninput = (e) => {
             const word = $("fmt-confirm-word").textContent;
             $("fmt-submit").disabled = e.target.value !== word;

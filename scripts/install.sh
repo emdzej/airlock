@@ -88,6 +88,7 @@ apt-get install -y --no-install-recommends \
     avahi-daemon libnss-mdns \
     exfatprogs ntfs-3g dosfstools e2fsprogs hfsprogs \
     gdisk parted util-linux \
+    xz-utils \
     ca-certificates curl
 
 # --- get the binary ---

@@ -198,6 +198,36 @@ curl -sI http://localhost/ | head -1     # expect: HTTP/1.1 200 OK
 journalctl -u airlockd -n 20 --no-pager  # sanity-check the startup log
 ```
 
+## Flashing OS images to a drive
+
+The Devices tab has a **Flash…** action per device. Pick a raw `.img`
+or an `.img.xz` / `.img.gz` (Raspberry Pi OS, OpenWRT, Ubuntu, etc.);
+airlockd streams the upload straight through an optional decompressor
+onto `/dev/<device>`. No intermediate storage — a 3 GB Pi OS image
+never lands on the Pi's boot SD, only on the target.
+
+**Workflow:**
+1. Plug in a target USB drive or SD-in-USB-reader.
+2. Go to `http://<host>.local/devices` → **Flash…** on the target.
+3. Pick the image, type the confirmation word, hit **Flash**.
+4. Progress shows uploaded bytes + written bytes in real time.
+5. When done, the daemon re-scans partitions; anything mountable (FAT,
+   NTFS, ext4) appears back on the Mounts tab automatically.
+
+**Safety:**
+- Airlock refuses to flash the Pi's own boot media — only USB-attached
+  block devices are candidates (`ID_BUS=usb`).
+- Type-to-confirm uses the drive's current label (or `FLASH` for
+  unlabeled media) to slow down accidental clicks.
+- For uncompressed images the installer refuses upfront if the file is
+  larger than the target drive.
+
+**Not supported yet:**
+- `.zip` archives — extract the `.img` locally first.
+- Verify-after-write pass — planned; add `?verify=1` when available.
+- Cancellation mid-flash — safer to always complete than leave a
+  half-written device.
+
 ## Post-install
 
 Plug in a USB drive. Within a few seconds:

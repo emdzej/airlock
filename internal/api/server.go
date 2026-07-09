@@ -14,6 +14,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/emdzej/airlock/internal/flash"
 	"github.com/emdzej/airlock/internal/format"
 	"github.com/emdzej/airlock/internal/mount"
 )
@@ -34,6 +35,7 @@ const RepoURL = "https://github.com/emdzej/airlock"
 type Server struct {
 	mgr     *mount.Manager
 	fmtr    *format.Formatter
+	flsh    *flash.Flasher
 	tmpl    *template.Template
 	onBusy  BusyFunc
 	version string
@@ -54,6 +56,7 @@ func New(mgr *mount.Manager, onBusy BusyFunc, version string) (*Server, error) {
 	return &Server{
 		mgr:     mgr,
 		fmtr:    format.New(mgr),
+		flsh:    flash.New(mgr),
 		tmpl:    tmpl,
 		onBusy:  onBusy,
 		version: version,
@@ -100,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/devices/{parent}", s.handleDeviceInfo)
 	mux.HandleFunc("POST /api/devices/{parent}/eject", s.handleDeviceEject)
 	mux.HandleFunc("POST /api/devices/{parent}/format", s.handleFormat)
+	mux.HandleFunc("POST /api/devices/{parent}/flash", s.handleFlash)
 	// Partition-level operations
 	mux.HandleFunc("POST /api/partitions/{name}/label", s.handleSetLabel)
 	mux.HandleFunc("POST /api/partitions/{name}/mount", s.handleMountPartition)
