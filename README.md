@@ -104,4 +104,4 @@ GPIO wiring, uninstall, and troubleshooting.
 
 ## License
 
-TBD.
+[MIT](LICENSE).
