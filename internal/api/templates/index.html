@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mass storage over network — {{ .Host }}</title>
+    <style>
+        body { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+               max-width: 720px; margin: 40px auto; padding: 0 20px; color: #222; background: #fafafa; }
+        h1 { font-size: 26px; margin: 0 0 2px; font-weight: 600; }
+        .host { color: #888; font-size: 13px; margin-bottom: 20px; }
+        .topnav { display: inline-flex; background: white; border: 1px solid #e5e5e5;
+                  border-radius: 8px; padding: 4px; margin-bottom: 20px; gap: 4px; }
+        .topnav .tab { padding: 6px 14px; text-decoration: none; color: #666;
+                       border-radius: 6px; font-size: 13px; font-weight: 500; }
+        .topnav .tab.active { background: #222; color: white; }
+        .topnav .tab:hover:not(.active) { background: #f5f5f5; }
+        .toolbar { display: flex; justify-content: space-between; align-items: center;
+                   padding: 12px 16px; background: white; border: 1px solid #e5e5e5;
+                   border-radius: 8px 8px 0 0; border-bottom: 0; }
+        .count { color: #555; font-size: 13px; }
+        .drives { background: white; border: 1px solid #e5e5e5; border-radius: 0 0 8px 8px; }
+        .drive { display: grid; grid-template-columns: 1fr auto; gap: 16px;
+                 align-items: center; padding: 16px; border-bottom: 1px solid #eee; }
+        .drive:last-child { border-bottom: none; }
+        .name { font-weight: 600; font-size: 15px; }
+        a.drive-link { color: inherit; text-decoration: none; }
+        a.drive-link:hover { text-decoration: underline; }
+        .meta { color: #666; font-size: 12px; margin-top: 4px; word-break: break-all; }
+        .smb-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+        .smb-link { color: #06c; text-decoration: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .smb-link:hover { text-decoration: underline; }
+        .copy-btn { padding: 2px 8px; border: 1px solid #ddd; background: white;
+                    border-radius: 4px; font-size: 11px; cursor: pointer; color: #555; }
+        .copy-btn:hover { background: #f5f5f5; }
+        .copy-btn.copied { background: #e8f5e9; border-color: #a5d6a7; color: #2e7d32; }
+        .empty { padding: 60px 20px; color: #999; text-align: center; }
+        button { padding: 8px 14px; border: 1px solid #ccc; background: white;
+                 border-radius: 6px; cursor: pointer; font: inherit; }
+        button:hover { background: #f5f5f5; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.danger { color: #b00; border-color: #d99; }
+        button.danger:hover { background: #fdf0f0; }
+        .footer { margin-top: 24px; text-align: center; }
+        .footer-link { display: inline-flex; align-items: center; gap: 6px;
+                       color: #aaa; font-size: 11px; text-decoration: none;
+                       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .footer-link:hover { color: #06c; }
+        .gh-icon { vertical-align: middle; }
+    </style>
+</head>
+<body>
+    <h1>Airlock</h1>
+    <div class="host">Mass storage over network · {{ .Host }}</div>
+
+    {{ template "nav" . }}
+
+    <div id="toolbar" class="toolbar" hidden>
+        <div class="count" id="count"></div>
+        <button class="danger" id="eject-all-btn">Eject all</button>
+    </div>
+
+    <div id="drives" class="drives"></div>
+
+    {{ template "footer" . }}
+
+    <script>
+    (() => {
+        const host = "{{ .Host }}";
+        const isWindows = navigator.userAgent.includes("Windows");
+        const $ = (id) => document.getElementById(id);
+
+        // Last-seen JSON signature. Skip DOM work when nothing changed —
+        // keeps hover / focus / scroll intact between polls.
+        let lastSig = "";
+
+        async function refresh() {
+            if (document.hidden) return;
+            let drives;
+            try {
+                const r = await fetch("/api/drives");
+                if (!r.ok) return;
+                drives = await r.json();
+            } catch { return; }
+            const sig = JSON.stringify(drives);
+            if (sig === lastSig) return;
+            lastSig = sig;
+            render(drives);
+        }
+
+        function render(drives) {
+            const toolbar = $("toolbar");
+            const count = $("count");
+            const container = $("drives");
+            toolbar.hidden = false;
+            count.textContent = drives.length + " mount" + (drives.length === 1 ? "" : "s");
+            $("eject-all-btn").hidden = drives.length === 0;
+
+            container.innerHTML = "";
+            if (drives.length === 0) {
+                const empty = document.createElement("div");
+                empty.className = "empty";
+                empty.innerHTML = 'No mounts. Plug a drive in, or check the <a href="/devices">Devices</a> tab.';
+                container.appendChild(empty);
+                return;
+            }
+            for (const d of drives) container.appendChild(renderRow(d));
+        }
+
+        function renderRow(d) {
+            const row = document.createElement("div");
+            row.className = "drive";
+
+            const info = document.createElement("div");
+            const name = document.createElement("a");
+            name.className = "name drive-link";
+            name.href = "/drives/" + encodeURIComponent(d.share_name) + "/";
+            name.textContent = d.display_name;
+            info.appendChild(name);
+
+            const meta = document.createElement("div");
+            meta.className = "meta";
+            meta.textContent = `${d.fs_type} · ${d.size_human}` + (d.read_only ? " · read-only" : "");
+            info.appendChild(meta);
+
+            const smbRow = document.createElement("div");
+            smbRow.className = "smb-row";
+            const link = document.createElement("a");
+            link.className = "smb-link";
+            link.href = `smb://${host}/${d.share_name}`;
+            link.textContent = `smb://${host}/${d.share_name}`;
+            smbRow.appendChild(link);
+            const copy = document.createElement("button");
+            copy.className = "copy-btn";
+            copy.textContent = "Copy";
+            copy.title = "Copy path (Windows: \\\\host\\share, other: smb://host/share)";
+            copy.onclick = () => copyShare(d.share_name, copy);
+            smbRow.appendChild(copy);
+            info.appendChild(smbRow);
+            row.appendChild(info);
+
+            const ejectBtn = document.createElement("button");
+            ejectBtn.textContent = "Eject";
+            ejectBtn.onclick = () => eject(d.share_name, ejectBtn);
+            row.appendChild(ejectBtn);
+            return row;
+        }
+
+        async function eject(name, btn) {
+            btn.disabled = true;
+            btn.textContent = "Ejecting…";
+            const r = await fetch("/api/drives/" + encodeURIComponent(name) + "/eject", {method: "POST"});
+            if (!r.ok) {
+                alert("Eject failed: " + await r.text());
+                btn.disabled = false;
+                btn.textContent = "Eject";
+                return;
+            }
+            lastSig = ""; refresh();
+        }
+
+        $("eject-all-btn").onclick = async () => {
+            const r = await fetch("/api/eject-all", {method: "POST"});
+            if (!r.ok) { alert("Eject failed: " + await r.text()); return; }
+            lastSig = ""; refresh();
+        };
+
+        function copyShare(share, btn) {
+            const text = isWindows ? `\\\\${host}\\${share}` : `smb://${host}/${share}`;
+            const ta = document.createElement("textarea");
+            ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+            document.body.appendChild(ta); ta.select();
+            try { document.execCommand("copy"); } catch {}
+            document.body.removeChild(ta);
+            btn.classList.add("copied");
+            const orig = btn.textContent;
+            btn.textContent = "Copied";
+            setTimeout(() => { btn.classList.remove("copied"); btn.textContent = orig; }, 1200);
+        }
+
+        refresh();
+        setInterval(refresh, 3000);
+    })();
+    </script>
+</body>
+</html>

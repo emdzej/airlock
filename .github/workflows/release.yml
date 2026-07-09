@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. 0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+          cache: true
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${TAG}"
+
+      - name: Build linux/arm64 binary
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o dist/airlockd \
+            ./cmd/airlockd
+          file dist/airlockd
+
+      - name: Package binary tarball
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        working-directory: dist
+        run: |
+          tar czf "airlockd-${VERSION}-linux-arm64.tar.gz" airlockd
+          sha256sum "airlockd-${VERSION}-linux-arm64.tar.gz" > "airlockd-${VERSION}-linux-arm64.tar.gz.sha256"
+
+      - name: Package offline install bundle
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          B="bundle/airlock-${VERSION}"
+          mkdir -p "$B/etc/systemd/system" \
+                   "$B/etc/samba/smb.conf.d" \
+                   "$B/etc/avahi/services" \
+                   "$B/etc/udev/rules.d"
+
+          cp scripts/install.sh "$B/install.sh"
+          chmod +x "$B/install.sh"
+
+          # Config files, sourced from the pi-gen stage so image + installer
+          # stay in lock-step.
+          cp image/pi-gen/stage-airlock/01-airlockd/files/etc/systemd/system/airlockd.service \
+             "$B/etc/systemd/system/airlockd.service"
+          cp image/pi-gen/stage-airlock/02-samba/files/etc/samba/smb.conf \
+             "$B/etc/samba/smb.conf"
+          touch "$B/etc/samba/smb.conf.d/airlock.conf"
+          cp image/pi-gen/stage-airlock/03-avahi/files/etc/avahi/services/airlock.service \
+             "$B/etc/avahi/services/airlock.service"
+          cp image/pi-gen/stage-airlock/04-udev/files/etc/udev/rules.d/99-airlock.rules \
+             "$B/etc/udev/rules.d/99-airlock.rules"
+          cp dist/airlockd "$B/airlockd"
+
+          cd bundle && tar czf "../dist/airlock-${VERSION}-bundle.tar.gz" "airlock-${VERSION}"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: airlock ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/airlockd-${{ steps.tag.outputs.tag }}-linux-arm64.tar.gz
+            dist/airlockd-${{ steps.tag.outputs.tag }}-linux-arm64.tar.gz.sha256
+            dist/airlock-${{ steps.tag.outputs.tag }}-bundle.tar.gz
+            scripts/install.sh

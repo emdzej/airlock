@@ -1,0 +1,13 @@
+# Airlock — tag USB mass-storage block devices for airlockd.
+#
+# airlockd subscribes to the udev netlink socket and filters on the
+# AIRLOCK_MANAGED tag below. Tagging (rather than driving mounts from
+# a RUN+= line) keeps mount policy in one place — the daemon — instead
+# of split between udev rules and Go code.
+#
+# We deliberately match ONLY USB-attached block devices (SUBSYSTEM=block,
+# KERNEL=sd*, ID_BUS=usb). The Pi's own boot media (mmcblk0*) shows up as
+# a native SD device, and we never want to touch it — exposing /boot/firmware
+# or / over SMB would be a critical security regression.
+
+SUBSYSTEM=="block", KERNEL=="sd[a-z]*", ENV{ID_BUS}=="usb", ENV{AIRLOCK_MANAGED}="1"

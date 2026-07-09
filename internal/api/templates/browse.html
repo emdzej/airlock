@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ .Share }} — Mass storage over network</title>
+    <style>
+        body { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+               max-width: 900px; margin: 40px auto; padding: 0 20px; color: #222; background: #fafafa; }
+        h1 { font-size: 22px; margin: 0 0 2px; font-weight: 600; }
+        h1 a { color: inherit; text-decoration: none; }
+        h1 a:hover { text-decoration: underline; }
+        .host { color: #888; font-size: 13px; margin-bottom: 20px; }
+        .topnav { display: inline-flex; background: white; border: 1px solid #e5e5e5;
+                  border-radius: 8px; padding: 4px; margin-bottom: 20px; gap: 4px; }
+        .topnav .tab { padding: 6px 14px; text-decoration: none; color: #666;
+                       border-radius: 6px; font-size: 13px; font-weight: 500; }
+        .topnav .tab.active { background: #222; color: white; }
+        .topnav .tab:hover:not(.active) { background: #f5f5f5; }
+        .crumbs { padding: 10px 16px; background: white; border: 1px solid #e5e5e5;
+                  border-radius: 6px; margin-bottom: 12px; font-size: 13px;
+                  overflow-x: auto; white-space: nowrap; }
+        .crumbs a { color: #06c; text-decoration: none; }
+        .crumbs a:hover { text-decoration: underline; }
+        .crumbs .sep { color: #bbb; margin: 0 6px; }
+        .toolbar { display: flex; justify-content: space-between; align-items: center;
+                   padding: 10px 16px; background: white; border: 1px solid #e5e5e5;
+                   border-radius: 8px 8px 0 0; border-bottom: 0; gap: 12px; flex-wrap: wrap; }
+        .count { color: #555; font-size: 13px; }
+        .actions { display: flex; gap: 8px; }
+        .entries { background: white; border: 1px solid #e5e5e5;
+                   border-radius: 0 0 8px 8px; min-height: 60px; }
+        .row { display: grid; grid-template-columns: 28px 1fr 90px 150px auto;
+               gap: 12px; align-items: center; padding: 10px 16px;
+               border-bottom: 1px solid #f0f0f0; }
+        .row:last-child { border-bottom: none; }
+        .row:hover { background: #fafafa; }
+        .icon { color: #888; font-size: 16px; text-align: center; }
+        .icon.dir { color: #b58600; }
+        .row-name { color: inherit; text-decoration: none; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
+        .row-name.dir { font-weight: 600; }
+        .row-name:hover { text-decoration: underline; }
+        .row-size, .row-date { color: #888; font-size: 12px; }
+        .row-actions { display: flex; gap: 4px; opacity: 0; transition: opacity 0.15s; }
+        .row:hover .row-actions { opacity: 1; }
+        .row-actions button { padding: 4px 10px; font-size: 12px; }
+        button, .btn { padding: 8px 14px; border: 1px solid #ccc; background: white;
+                       border-radius: 6px; cursor: pointer; font: inherit; }
+        button:hover, .btn:hover { background: #f5f5f5; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.danger { color: #b00; border-color: #d99; }
+        button.danger:hover { background: #fdf0f0; }
+        .btn.primary { background: #06c; color: white; border-color: #06c; }
+        .btn.primary:hover { background: #05a; }
+        .upload-label { display: inline-block; }
+        .empty { padding: 40px; color: #999; text-align: center; }
+        .drop-hint { border: 2px dashed #06c; background: #f0f7ff !important; }
+        .progress { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+                    background: white; border: 1px solid #ccc; border-radius: 8px;
+                    padding: 12px 16px; min-width: 340px; max-width: 500px;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.1); font-size: 12px; z-index: 100; }
+        .progress-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .progress-head button { padding: 3px 10px; font-size: 11px; }
+        .progress-bar { height: 6px; background: #eee; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #06c; width: 0; transition: width 0.15s; }
+        .progress-list { list-style: none; margin: 10px 0 0; padding: 8px 0 0;
+                         max-height: 220px; overflow-y: auto; border-top: 1px solid #eee; }
+        .progress-list li { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px;
+                            padding: 3px 0; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .progress-list li .icon { text-align: center; color: #999; }
+        .progress-list li.done .icon { color: #2e7d32; }
+        .progress-list li.error .icon { color: #a10000; }
+        .progress-list li.active .icon { color: #06c; }
+        .progress-list .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .progress-list .fstatus { color: #888; text-align: right; white-space: nowrap; }
+        .progress-list li.error .fstatus { color: #a10000; }
+        dialog { border: none; border-radius: 10px; padding: 20px;
+                 box-shadow: 0 10px 40px rgba(0,0,0,0.2); min-width: 320px; }
+        dialog::backdrop { background: rgba(0,0,0,0.3); }
+        dialog h2 { margin: 0 0 12px; font-size: 16px; }
+        dialog input[type=text] { width: 100%; padding: 8px; border: 1px solid #ccc;
+                                  border-radius: 6px; font: inherit; box-sizing: border-box; }
+        dialog .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+        .footer { margin-top: 24px; text-align: center; }
+        .footer-link { display: inline-flex; align-items: center; gap: 6px;
+                       color: #aaa; font-size: 11px; text-decoration: none;
+                       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .footer-link:hover { color: #06c; }
+        .gh-icon { vertical-align: middle; }
+        .ro-banner { padding: 10px 16px; background: #fff8e1; border: 1px solid #ffe082;
+                     border-radius: 6px; margin-bottom: 12px; font-size: 13px; color: #7c5c00; }
+    </style>
+</head>
+<body>
+    <h1><a href="/">Airlock</a> / {{ .Label }}</h1>
+    <div class="host">{{ .Host }} · {{ .FSType }} · {{ .SizeHuman }}{{ if .ReadOnly }} · read-only{{ end }}</div>
+
+    {{ template "nav" . }}
+
+    {{ if .ReadOnly }}
+    <div class="ro-banner">This drive is write-protected. You can browse and download files, but not modify them.</div>
+    {{ end }}
+
+    <nav class="crumbs" id="crumbs"></nav>
+
+    <div class="toolbar">
+        <div class="count" id="status">Loading…</div>
+        <div class="actions">
+            {{ if not .ReadOnly }}
+            <button id="mkdir-btn">New folder</button>
+            <label class="btn upload-label">
+                <input type="file" id="upload-folder-input" webkitdirectory hidden>
+                <span>Upload folder</span>
+            </label>
+            <label class="btn primary upload-label">
+                <input type="file" id="upload-input" multiple hidden>
+                <span>Upload files</span>
+            </label>
+            {{ end }}
+        </div>
+    </div>
+
+    <div id="entries" class="entries"></div>
+
+    <div id="progress" class="progress" hidden>
+        <div class="progress-head">
+            <div id="progress-text">Uploading…</div>
+            <button type="button" id="progress-toggle">Details</button>
+        </div>
+        <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+        <ul id="progress-list" class="progress-list" hidden></ul>
+    </div>
+
+    <dialog id="mkdir-dialog">
+        <h2>New folder</h2>
+        <form id="mkdir-form">
+            <input id="mkdir-name" type="text" placeholder="folder name" required autocomplete="off">
+            <div class="dlg-actions">
+                <button type="button" onclick="document.getElementById('mkdir-dialog').close()">Cancel</button>
+                <button type="submit" class="btn primary">Create</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="rename-dialog">
+        <h2>Rename</h2>
+        <form id="rename-form">
+            <input id="rename-name" type="text" required autocomplete="off">
+            <div class="dlg-actions">
+                <button type="button" onclick="document.getElementById('rename-dialog').close()">Cancel</button>
+                <button type="submit" class="btn primary">Rename</button>
+            </div>
+        </form>
+    </dialog>
+
+    {{ template "footer" . }}
+
+    <script>
+    (() => {
+        const share = "{{ .Share }}";
+        const readOnly = {{ if .ReadOnly }}true{{ else }}false{{ end }};
+
+        const $ = (id) => document.getElementById(id);
+        const encodePath = (p) => encodeURIComponent(p);
+
+        const currentPath = () => {
+            const u = new URL(location.href);
+            return u.searchParams.get("path") || "/";
+        };
+        const setPath = (p) => {
+            const u = new URL(location.href);
+            u.searchParams.set("path", p);
+            history.pushState({}, "", u);
+            load();
+        };
+        window.addEventListener("popstate", load);
+
+        function renderCrumbs(p) {
+            const parts = p.split("/").filter(Boolean);
+            const nav = $("crumbs");
+            nav.innerHTML = "";
+            const rootLink = document.createElement("a");
+            rootLink.href = "#";
+            rootLink.textContent = "/";
+            rootLink.onclick = (e) => { e.preventDefault(); setPath("/"); };
+            nav.appendChild(rootLink);
+            let acc = "";
+            parts.forEach((part, i) => {
+                acc += "/" + part;
+                const sep = document.createElement("span");
+                sep.className = "sep"; sep.textContent = "/";
+                nav.appendChild(sep);
+                if (i === parts.length - 1) {
+                    const cur = document.createElement("span");
+                    cur.textContent = part;
+                    nav.appendChild(cur);
+                } else {
+                    const link = document.createElement("a");
+                    link.href = "#"; link.textContent = part;
+                    const target = acc;
+                    link.onclick = (e) => { e.preventDefault(); setPath(target); };
+                    nav.appendChild(link);
+                }
+            });
+        }
+
+        function humanBytes(b) {
+            if (b < 1000) return b + " B";
+            const units = ["kB", "MB", "GB", "TB"];
+            let n = b, i = -1;
+            do { n /= 1000; i++; } while (n >= 1000 && i < units.length - 1);
+            return n.toFixed(1) + " " + units[i];
+        }
+        function formatDate(iso) {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return "";
+            const now = new Date();
+            const sameDay = d.toDateString() === now.toDateString();
+            if (sameDay) return d.toTimeString().slice(0, 5);
+            const year = d.getFullYear() === now.getFullYear() ? "" : " " + d.getFullYear();
+            return d.toLocaleDateString(undefined, {month: "short", day: "numeric"}) + year;
+        }
+
+        async function load() {
+            const p = currentPath();
+            renderCrumbs(p);
+            const container = $("entries");
+            container.innerHTML = "";
+            $("status").textContent = "Loading…";
+            let data;
+            try {
+                const r = await fetch(`/api/drives/${encodeURIComponent(share)}/ls?path=${encodePath(p)}`);
+                if (!r.ok) throw new Error(await r.text());
+                data = await r.json();
+            } catch (e) {
+                $("status").textContent = "Error: " + e.message;
+                return;
+            }
+            $("status").textContent = data.entries.length + " item" + (data.entries.length === 1 ? "" : "s");
+            if (data.entries.length === 0) {
+                const empty = document.createElement("div");
+                empty.className = "empty";
+                empty.textContent = readOnly ? "Empty folder." : "Empty folder. Drop files or a folder here, or use the buttons.";
+                container.appendChild(empty);
+                return;
+            }
+            for (const e of data.entries) {
+                const row = document.createElement("div");
+                row.className = "row";
+
+                const icon = document.createElement("div");
+                icon.className = "icon" + (e.is_dir ? " dir" : "");
+                icon.textContent = e.is_dir ? "▸" : "•";
+                row.appendChild(icon);
+
+                const link = document.createElement("a");
+                link.className = "row-name" + (e.is_dir ? " dir" : "");
+                link.textContent = e.name;
+                const entryPath = (p === "/" ? "" : p) + "/" + e.name;
+                if (e.is_dir) {
+                    link.href = "#";
+                    link.onclick = (ev) => { ev.preventDefault(); setPath(entryPath); };
+                } else {
+                    link.href = `/api/drives/${encodeURIComponent(share)}/dl?path=${encodePath(entryPath)}`;
+                }
+                row.appendChild(link);
+
+                const size = document.createElement("div");
+                size.className = "row-size";
+                size.textContent = e.is_dir ? "" : humanBytes(e.size);
+                row.appendChild(size);
+
+                const date = document.createElement("div");
+                date.className = "row-date";
+                date.textContent = formatDate(e.modified);
+                row.appendChild(date);
+
+                const actions = document.createElement("div");
+                actions.className = "row-actions";
+                if (!e.is_dir) {
+                    const dl = document.createElement("button");
+                    dl.textContent = "Download";
+                    dl.onclick = () => { location.href = link.href; };
+                    actions.appendChild(dl);
+                }
+                if (!readOnly) {
+                    const rn = document.createElement("button");
+                    rn.textContent = "Rename";
+                    rn.onclick = () => promptRename(entryPath, e.name);
+                    actions.appendChild(rn);
+
+                    const rm = document.createElement("button");
+                    rm.className = "danger";
+                    rm.textContent = "Delete";
+                    rm.onclick = () => confirmDelete(entryPath, e.name, e.is_dir);
+                    actions.appendChild(rm);
+                }
+                row.appendChild(actions);
+
+                container.appendChild(row);
+            }
+        }
+
+        function promptRename(entryPath, currentName) {
+            const dlg = $("rename-dialog");
+            const input = $("rename-name");
+            input.value = currentName;
+            dlg.showModal();
+            input.select();
+            $("rename-form").onsubmit = async (e) => {
+                e.preventDefault();
+                const newName = input.value.trim();
+                dlg.close();
+                if (!newName || newName === currentName) return;
+                const parent = entryPath.substring(0, entryPath.lastIndexOf("/"));
+                const newPath = parent + "/" + newName;
+                const r = await fetch(`/api/drives/${encodeURIComponent(share)}/mv`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({from: entryPath, to: newPath}),
+                });
+                if (!r.ok) alert("Rename failed: " + await r.text());
+                load();
+            };
+        }
+
+        async function confirmDelete(entryPath, name, isDir) {
+            const msg = isDir
+                ? `Delete folder "${name}" and everything in it?`
+                : `Delete file "${name}"?`;
+            if (!confirm(msg)) return;
+            const r = await fetch(`/api/drives/${encodeURIComponent(share)}/rm?path=${encodePath(entryPath)}`, {
+                method: "DELETE",
+            });
+            if (!r.ok) alert("Delete failed: " + await r.text());
+            load();
+        }
+
+        if (!readOnly) {
+            $("mkdir-btn").onclick = () => {
+                const dlg = $("mkdir-dialog");
+                $("mkdir-name").value = "";
+                dlg.showModal();
+                $("mkdir-name").focus();
+                $("mkdir-form").onsubmit = async (e) => {
+                    e.preventDefault();
+                    const name = $("mkdir-name").value.trim();
+                    dlg.close();
+                    if (!name) return;
+                    const p = currentPath();
+                    const newPath = (p === "/" ? "" : p) + "/" + name;
+                    const r = await fetch(`/api/drives/${encodeURIComponent(share)}/mkdir`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({path: newPath}),
+                    });
+                    if (!r.ok) alert("Create folder failed: " + await r.text());
+                    load();
+                };
+            };
+
+            // Individual file upload. Preserves File.webkitRelativePath in case
+            // the browser hands us a synthetic path (rare on plain file picker).
+            $("upload-input").onchange = (e) => {
+                const files = Array.from(e.target.files).map(f => ({
+                    file: f,
+                    path: f.webkitRelativePath || f.name,
+                }));
+                uploadFiles(files);
+                e.target.value = "";
+            };
+
+            // Folder upload via <input webkitdirectory>. Every File carries a
+            // webkitRelativePath like "myfolder/sub/file.txt" — send that as the
+            // multipart filename so the server can rebuild the tree.
+            $("upload-folder-input").onchange = (e) => {
+                const files = Array.from(e.target.files).map(f => ({
+                    file: f,
+                    path: f.webkitRelativePath || f.name,
+                }));
+                uploadFiles(files);
+                e.target.value = "";
+            };
+
+            const dropTarget = $("entries");
+            dropTarget.ondragover = (e) => { e.preventDefault(); dropTarget.classList.add("drop-hint"); };
+            dropTarget.ondragleave = () => dropTarget.classList.remove("drop-hint");
+            dropTarget.ondrop = async (e) => {
+                e.preventDefault();
+                dropTarget.classList.remove("drop-hint");
+                const items = Array.from(e.dataTransfer.items);
+                const files = [];
+                for (const item of items) {
+                    // webkitGetAsEntry lets us walk folders. Chrome, Edge,
+                    // Safari 11+, Firefox 50+ all support this.
+                    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                    if (entry) {
+                        await collectEntry(entry, "", files);
+                    } else if (item.kind === "file") {
+                        const f = item.getAsFile();
+                        if (f) files.push({file: f, path: f.name});
+                    }
+                }
+                if (files.length > 0) uploadFiles(files);
+            };
+        }
+
+        async function collectEntry(entry, base, out) {
+            const rel = base ? base + "/" + entry.name : entry.name;
+            if (entry.isFile) {
+                const file = await new Promise((res, rej) => entry.file(res, rej));
+                out.push({file, path: rel});
+            } else if (entry.isDirectory) {
+                const reader = entry.createReader();
+                // readEntries returns a batch at a time (browsers cap around 100);
+                // loop until it returns empty.
+                while (true) {
+                    const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+                    if (batch.length === 0) break;
+                    for (const e of batch) await collectEntry(e, rel, out);
+                }
+            }
+        }
+
+        // Progress state for the batch currently uploading.
+        let progressRows = [];
+        let progressTotalBytes = 0;
+        let progressLoadedBytes = 0;
+
+        $("progress-toggle").onclick = () => {
+            const list = $("progress-list");
+            list.hidden = !list.hidden;
+            $("progress-toggle").textContent = list.hidden ? "Details" : "Hide";
+        };
+
+        function initProgress(files) {
+            const list = $("progress-list");
+            list.innerHTML = "";
+            progressRows = files.map((f, i) => {
+                const li = document.createElement("li");
+                const icon = document.createElement("span");
+                icon.className = "icon"; icon.textContent = "○";
+                const name = document.createElement("span");
+                name.className = "fname";
+                name.textContent = f.path;
+                const status = document.createElement("span");
+                status.className = "fstatus";
+                status.textContent = "queued";
+                li.appendChild(icon); li.appendChild(name); li.appendChild(status);
+                list.appendChild(li);
+                return {li, icon, status, size: f.file.size, loaded: 0};
+            });
+            progressTotalBytes = files.reduce((a, f) => a + f.file.size, 0);
+            progressLoadedBytes = 0;
+            $("progress").hidden = false;
+            $("progress-fill").style.width = "0%";
+            $("progress-list").hidden = true;
+            $("progress-toggle").textContent = "Details";
+            updateOverall(0, files.length);
+        }
+
+        function updateOverall(done, total) {
+            const pct = progressTotalBytes > 0
+                ? Math.round((progressLoadedBytes / progressTotalBytes) * 100)
+                : 0;
+            $("progress-fill").style.width = pct + "%";
+            $("progress-text").textContent =
+                `Uploading ${done} of ${total} file${total === 1 ? "" : "s"} — ${pct}%`;
+        }
+
+        function markActive(idx) {
+            const row = progressRows[idx];
+            row.li.classList.add("active");
+            row.icon.textContent = "↑";
+            row.status.textContent = "0%";
+        }
+        function markProgress(idx, loaded, total, doneCount, totalCount) {
+            const row = progressRows[idx];
+            const delta = loaded - row.loaded;
+            row.loaded = loaded;
+            progressLoadedBytes += delta;
+            const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+            row.status.textContent = pct + "%";
+            updateOverall(doneCount, totalCount);
+        }
+        function markDone(idx, doneCount, totalCount) {
+            const row = progressRows[idx];
+            // Push any leftover unaccounted bytes into the aggregate — some
+            // small files never fire a lengthComputable progress event.
+            const leftover = row.size - row.loaded;
+            if (leftover > 0) { progressLoadedBytes += leftover; row.loaded = row.size; }
+            row.li.classList.remove("active");
+            row.li.classList.add("done");
+            row.icon.textContent = "✓";
+            row.status.textContent = "done";
+            updateOverall(doneCount, totalCount);
+        }
+        function markError(idx, msg) {
+            const row = progressRows[idx];
+            row.li.classList.remove("active");
+            row.li.classList.add("error");
+            row.icon.textContent = "✗";
+            row.status.textContent = msg;
+            // Auto-open details when there's a failure so the user sees it.
+            $("progress-list").hidden = false;
+            $("progress-toggle").textContent = "Hide";
+        }
+        function finishProgress(ok, failed) {
+            $("progress-text").textContent =
+                failed === 0
+                    ? `Uploaded ${ok} file${ok === 1 ? "" : "s"}.`
+                    : `Uploaded ${ok}, ${failed} failed.`;
+            // Auto-hide on success after a short delay; leave open on failure.
+            if (failed === 0) {
+                setTimeout(() => { $("progress").hidden = true; }, 1500);
+            }
+        }
+
+        async function uploadFiles(files) {
+            if (files.length === 0) return;
+            const dir = currentPath();
+            initProgress(files);
+            let ok = 0, failed = 0;
+            for (let i = 0; i < files.length; i++) {
+                const {file, path: rel} = files[i];
+                const targetPath = (dir === "/" ? "" : dir) + "/" + rel;
+                markActive(i);
+                try {
+                    await uploadOne(file, targetPath, i, files.length);
+                    ok++;
+                    markDone(i, ok, files.length);
+                } catch (e) {
+                    failed++;
+                    markError(i, e.message || "failed");
+                    updateOverall(ok + failed, files.length);
+                }
+            }
+            finishProgress(ok, failed);
+            load();
+        }
+
+        function uploadOne(file, targetPath, idx, total) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open("POST", `/api/drives/${encodeURIComponent(share)}/upload?path=${encodePath(targetPath)}`);
+                xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+                xhr.upload.onprogress = (ev) => {
+                    if (!ev.lengthComputable) return;
+                    // "done so far" for the summary excludes the file
+                    // currently uploading — count only fully-completed files.
+                    const doneCount = progressRows.filter(r => r.li.classList.contains("done")).length;
+                    markProgress(idx, ev.loaded, ev.total, doneCount, total);
+                };
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) resolve();
+                    else {
+                        let msg = xhr.responseText || xhr.statusText;
+                        try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+                        reject(new Error(msg));
+                    }
+                };
+                xhr.onerror = () => reject(new Error("network error"));
+                xhr.send(file);
+            });
+        }
+
+        load();
+    })();
+    </script>
+</body>
+</html>

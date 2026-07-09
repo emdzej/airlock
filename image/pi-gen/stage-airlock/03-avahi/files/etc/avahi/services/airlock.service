@@ -1,0 +1,26 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  Avahi advertisements for airlock.
+
+  _device-info._tcp with model=TimeCapsule6,106 tells macOS Finder to show
+  this host with the Time Capsule icon in the Network sidebar rather than
+  the generic "computer" icon. It has no port (port 0) — the record only
+  carries metadata via the TXT payload.
+-->
+<service-group>
+  <name replace-wildcards="yes">Airlock on %h</name>
+  <service>
+    <type>_smb._tcp</type>
+    <port>445</port>
+  </service>
+  <service>
+    <type>_http._tcp</type>
+    <port>80</port>
+  </service>
+  <service>
+    <type>_device-info._tcp</type>
+    <port>0</port>
+    <txt-record>model=TimeCapsule6,106</txt-record>
+  </service>
+</service-group>

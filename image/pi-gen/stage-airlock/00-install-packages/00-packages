@@ -1,0 +1,12 @@
+samba
+samba-common-bin
+avahi-daemon
+libnss-mdns
+exfatprogs
+ntfs-3g
+dosfstools
+hfsprogs
+gdisk
+parted
+udev
+overlayroot

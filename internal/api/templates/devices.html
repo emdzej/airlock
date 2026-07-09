@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Devices — Mass storage over network</title>
+    <style>
+        body { font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+               max-width: 900px; margin: 40px auto; padding: 0 20px; color: #222; background: #fafafa; }
+        h1 { font-size: 26px; margin: 0 0 2px; font-weight: 600; }
+        .host { color: #888; font-size: 13px; margin-bottom: 20px; }
+        .topnav { display: inline-flex; background: white; border: 1px solid #e5e5e5;
+                  border-radius: 8px; padding: 4px; margin-bottom: 20px; gap: 4px; }
+        .topnav .tab { padding: 6px 14px; text-decoration: none; color: #666;
+                       border-radius: 6px; font-size: 13px; font-weight: 500; }
+        .topnav .tab.active { background: #222; color: white; }
+        .topnav .tab:hover:not(.active) { background: #f5f5f5; }
+        .status { color: #555; font-size: 13px; padding: 10px 4px; }
+        .devices { display: flex; flex-direction: column; gap: 12px; }
+        .device { background: white; border: 1px solid #e5e5e5; border-radius: 8px; }
+        .dev-head { display: grid; grid-template-columns: 1fr auto; gap: 16px;
+                    align-items: center; padding: 14px 16px; border-bottom: 1px solid #f0f0f0; }
+        .dev-name { font-weight: 600; font-size: 15px; }
+        .dev-kernel { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #888; margin-left: 8px; }
+        .dev-meta { color: #666; font-size: 12px; margin-top: 4px; }
+        .dev-actions { display: flex; gap: 6px; }
+        .parts { list-style: none; margin: 0; padding: 0; }
+        .parts li { display: grid; grid-template-columns: 90px 1fr auto auto;
+                    gap: 12px; padding: 8px 16px; border-top: 1px solid #f5f5f5;
+                    align-items: center; font-size: 12px; }
+        .part-action button { padding: 4px 10px; font-size: 11px; }
+        .parts li:first-child { border-top: none; }
+        .pname { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #333; }
+        .pmeta { color: #666; }
+        .pmeta .fs { font-weight: 600; color: #333; }
+        .pmeta .lbl { color: #06c; margin-left: 6px; }
+        .pmeta .mnt { color: #888; margin-left: 6px; }
+        .pmeta .unmnt { color: #b58600; margin-left: 6px; }
+        .parts a { color: #06c; text-decoration: none; }
+        .parts a:hover { text-decoration: underline; }
+        .no-parts { padding: 12px 16px; color: #999; font-size: 12px; font-style: italic; }
+        .empty { padding: 60px 20px; color: #999; text-align: center; background: white;
+                 border: 1px solid #e5e5e5; border-radius: 8px; }
+        button { padding: 8px 14px; border: 1px solid #ccc; background: white;
+                 border-radius: 6px; cursor: pointer; font: inherit; font-size: 13px; }
+        button:hover { background: #f5f5f5; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.danger { color: #b00; border-color: #d99; }
+        button.danger:hover { background: #fdf0f0; }
+        dialog { border: none; border-radius: 10px; padding: 20px;
+                 box-shadow: 0 10px 40px rgba(0,0,0,0.2); min-width: 320px; max-width: 460px; }
+        dialog::backdrop { background: rgba(0,0,0,0.3); }
+        dialog h2 { margin: 0 0 12px; font-size: 16px; }
+        dialog input[type=text] { width: 100%; padding: 8px; border: 1px solid #ccc;
+                                  border-radius: 6px; font: inherit; box-sizing: border-box; }
+        dialog .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+        .fmt-warn { padding: 10px 12px; background: #ffebee; border: 1px solid #ffcdd2;
+                    border-radius: 6px; color: #a10000; font-size: 13px; margin-bottom: 14px; }
+        .fmt-block { margin: 12px 0; font-size: 13px; }
+        .fmt-block ul { margin: 6px 0 0 20px; padding: 0; }
+        .fmt-block li { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+        .fmt-fs label { display: block; padding: 4px 0; cursor: pointer; }
+        .fmt-fs small { color: #888; margin-left: 6px; }
+        .fmt-stage { padding: 8px 12px; background: #f5f5f5; border-radius: 4px;
+                     font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+        .fmt-stage.err { background: #ffebee; color: #a10000; }
+        .footer { margin-top: 24px; text-align: center; }
+        .footer-link { display: inline-flex; align-items: center; gap: 6px;
+                       color: #aaa; font-size: 11px; text-decoration: none;
+                       font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .footer-link:hover { color: #06c; }
+        .gh-icon { vertical-align: middle; }
+    </style>
+</head>
+<body>
+    <h1>Airlock</h1>
+    <div class="host">Mass storage over network · {{ .Host }}</div>
+
+    {{ template "nav" . }}
+
+    <div class="status" id="status">Loading…</div>
+    <div id="devices" class="devices"></div>
+
+    <dialog id="relabel-dialog">
+        <h2>Rename volume</h2>
+        <form id="relabel-form">
+            <div class="fmt-block" id="relabel-target"></div>
+            <div class="fmt-block">
+                <label>New label<br>
+                    <input id="relabel-input" type="text" required autocomplete="off">
+                </label>
+                <div id="relabel-hint" style="font-size:11px;color:#888;margin-top:4px;"></div>
+            </div>
+            <div class="dlg-actions">
+                <button type="button" id="relabel-cancel">Cancel</button>
+                <button type="submit" class="btn primary" id="relabel-submit">Rename</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="format-dialog">
+        <h2>Format drive</h2>
+        <div class="fmt-warn">
+            This will <b>erase all data</b> on the physical device. Cannot be undone.
+        </div>
+        <div class="fmt-block">
+            <div id="fmt-device"></div>
+            <div id="fmt-parts-wrap" hidden>
+                Partitions that will disappear:
+                <ul id="fmt-parts"></ul>
+            </div>
+        </div>
+        <div class="fmt-block">
+            <div>Filesystem</div>
+            <div class="fmt-fs">
+                <label><input type="radio" name="fs" value="vfat"> FAT32
+                    <small>most compatible, ≤32 GB</small></label>
+                <label><input type="radio" name="fs" value="exfat"> exFAT
+                    <small>large drives, cameras, phones</small></label>
+                <label><input type="radio" name="fs" value="ntfs"> NTFS
+                    <small>Windows-heavy workflows</small></label>
+                <label><input type="radio" name="fs" value="ext4"> ext4
+                    <small>Linux-only</small></label>
+            </div>
+        </div>
+        <div class="fmt-block">
+            <label>New volume label (optional)<br>
+                <input id="fmt-new-label" type="text" maxlength="15" autocomplete="off" placeholder="MYDRIVE">
+            </label>
+        </div>
+        <div class="fmt-block">
+            <label>To confirm, type <b><span id="fmt-confirm-word"></span></b><br>
+                <input id="fmt-confirm-input" type="text" autocomplete="off">
+            </label>
+        </div>
+        <div id="fmt-progress" hidden>
+            <div class="fmt-block">
+                <div id="fmt-stage" class="fmt-stage"></div>
+            </div>
+        </div>
+        <div class="dlg-actions">
+            <button type="button" id="fmt-cancel">Cancel</button>
+            <button type="button" id="fmt-submit" class="danger" disabled>Format</button>
+        </div>
+    </dialog>
+
+    {{ template "footer" . }}
+
+    <script>
+    (() => {
+        const $ = (id) => document.getElementById(id);
+        let currentDevice = null;
+
+        let lastSig = "";
+        async function load(force) {
+            if (document.hidden && !force) return;
+            let list;
+            try {
+                const r = await fetch("/api/devices");
+                if (!r.ok) throw new Error(await r.text());
+                list = await r.json();
+            } catch (e) {
+                $("status").textContent = "Error: " + e.message;
+                return;
+            }
+            const sig = JSON.stringify(list);
+            if (sig === lastSig && !force) return;
+            lastSig = sig;
+            $("status").textContent = list.length + " USB device" + (list.length === 1 ? "" : "s");
+            const container = $("devices");
+            container.innerHTML = "";
+            if (list.length === 0) {
+                const empty = document.createElement("div");
+                empty.className = "empty";
+                empty.textContent = "No USB storage devices attached.";
+                container.appendChild(empty);
+                return;
+            }
+            for (const d of list) container.appendChild(renderDevice(d));
+        }
+
+        function renderDevice(d) {
+            const el = document.createElement("div");
+            el.className = "device";
+            const head = document.createElement("div");
+            head.className = "dev-head";
+            const info = document.createElement("div");
+            const title = document.createElement("div");
+            title.className = "dev-name";
+            const label = [d.vendor, d.model].filter(Boolean).join(" ").trim() || d.name;
+            title.textContent = label;
+            const kernel = document.createElement("span");
+            kernel.className = "dev-kernel"; kernel.textContent = "/dev/" + d.name;
+            title.appendChild(kernel);
+            info.appendChild(title);
+            const meta = document.createElement("div");
+            meta.className = "dev-meta";
+            const pt = d.pt_type ? d.pt_type.toUpperCase() : "no partition table";
+            meta.textContent = `${d.size_human} · ${pt}` +
+                (d.transport ? ` · ${d.transport.toUpperCase()}` : "") +
+                (d.read_only ? " · read-only" : "");
+            info.appendChild(meta);
+            head.appendChild(info);
+            const actions = document.createElement("div");
+            actions.className = "dev-actions";
+            const hasMounted = d.partitions.some(p => p.is_airlock);
+            if (hasMounted) {
+                const ej = document.createElement("button");
+                ej.textContent = "Eject";
+                ej.onclick = () => ejectDevice(d.name, ej);
+                actions.appendChild(ej);
+            }
+            const fmt = document.createElement("button");
+            fmt.className = "danger";
+            fmt.textContent = "Format…";
+            fmt.disabled = d.any_partition_read_only;
+            if (fmt.disabled) fmt.title = "Cannot format: partition is read-only";
+            fmt.onclick = () => openFormatDialog(d);
+            actions.appendChild(fmt);
+            head.appendChild(actions);
+            el.appendChild(head);
+
+            if (d.partitions.length === 0) {
+                const np = document.createElement("div");
+                np.className = "no-parts";
+                np.textContent = "No partitions.";
+                el.appendChild(np);
+            } else {
+                const ul = document.createElement("ul");
+                ul.className = "parts";
+                for (const p of d.partitions) ul.appendChild(renderPartition(p));
+                el.appendChild(ul);
+            }
+            return el;
+        }
+
+        function renderPartition(p) {
+            const li = document.createElement("li");
+            const name = document.createElement("span");
+            name.className = "pname";
+            name.textContent = "/dev/" + p.name;
+            li.appendChild(name);
+            const meta = document.createElement("span");
+            meta.className = "pmeta";
+            const fs = document.createElement("span");
+            fs.className = "fs";
+            fs.textContent = p.fs_type || "(unformatted)";
+            meta.appendChild(fs);
+            if (p.label) {
+                const lbl = document.createElement("span");
+                lbl.className = "lbl"; lbl.textContent = p.label;
+                meta.appendChild(lbl);
+            }
+            if (p.is_airlock && p.share_name) {
+                const mnt = document.createElement("span");
+                mnt.className = "mnt";
+                const a = document.createElement("a");
+                a.href = "/drives/" + encodeURIComponent(p.share_name) + "/";
+                a.textContent = "→ " + p.share_name;
+                mnt.appendChild(a);
+                meta.appendChild(mnt);
+            } else if (p.mount_point) {
+                const mnt = document.createElement("span");
+                mnt.className = "mnt";
+                mnt.textContent = "mounted at " + p.mount_point;
+                meta.appendChild(mnt);
+            } else if (p.fs_type) {
+                const unmnt = document.createElement("span");
+                unmnt.className = "unmnt";
+                unmnt.textContent = "not mounted";
+                meta.appendChild(unmnt);
+            }
+            li.appendChild(meta);
+            const size = document.createElement("span");
+            size.textContent = p.size_human;
+            size.style.color = "#888";
+            li.appendChild(size);
+            const action = document.createElement("span");
+            action.className = "part-action";
+            if (p.can_relabel) {
+                const btn = document.createElement("button");
+                btn.textContent = "Rename";
+                btn.title = "Change the volume label";
+                btn.onclick = () => openRelabel(p);
+                action.appendChild(btn);
+            }
+            li.appendChild(action);
+            return li;
+        }
+
+        function openRelabel(p) {
+            const dlg = $("relabel-dialog");
+            $("relabel-target").textContent =
+                `${p.name} (${p.fs_type}${p.label ? ", currently \"" + p.label + "\"" : ""})`;
+            const input = $("relabel-input");
+            input.value = p.label || "";
+            input.maxLength = p.max_label_len || 32;
+            $("relabel-hint").textContent = p.max_label_len
+                ? `Up to ${p.max_label_len} characters`
+                : "";
+            dlg.showModal();
+            input.select();
+            $("relabel-form").onsubmit = async (e) => {
+                e.preventDefault();
+                const newLabel = input.value.trim();
+                if (!newLabel) { dlg.close(); return; }
+                $("relabel-submit").disabled = true;
+                $("relabel-submit").textContent = "Renaming…";
+                try {
+                    const r = await fetch(`/api/partitions/${encodeURIComponent(p.name)}/label`, {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({label: newLabel}),
+                    });
+                    if (!r.ok) {
+                        const body = await r.text();
+                        let msg = body;
+                        try { msg = JSON.parse(body).error || body; } catch {}
+                        alert("Rename failed: " + msg);
+                    }
+                } finally {
+                    $("relabel-submit").disabled = false;
+                    $("relabel-submit").textContent = "Rename";
+                    dlg.close();
+                    lastSig = ""; load(true);
+                }
+            };
+        }
+        document.getElementById("relabel-cancel").onclick = () =>
+            document.getElementById("relabel-dialog").close();
+
+        async function ejectDevice(name, btn) {
+            btn.disabled = true;
+            btn.textContent = "Ejecting…";
+            const r = await fetch("/api/devices/" + encodeURIComponent(name) + "/eject", {method: "POST"});
+            if (!r.ok) alert("Eject failed: " + await r.text());
+            lastSig = ""; load(true);
+        }
+
+        function openFormatDialog(d) {
+            currentDevice = d;
+            const title = [d.vendor, d.model].filter(Boolean).join(" ").trim() || d.name;
+            $("fmt-device").textContent = `${title} (/dev/${d.name}) — ${d.size_human}`;
+            const partsWrap = $("fmt-parts-wrap");
+            const ul = $("fmt-parts");
+            ul.innerHTML = "";
+            if (d.partitions.length > 0) {
+                partsWrap.hidden = false;
+                for (const p of d.partitions) {
+                    const li = document.createElement("li");
+                    const bits = [
+                        "/dev/" + p.name,
+                        p.fs_type || "(unformatted)",
+                        p.size_human,
+                    ];
+                    if (p.label) bits.push(p.label);
+                    li.textContent = bits.join(" · ");
+                    ul.appendChild(li);
+                }
+            } else {
+                partsWrap.hidden = true;
+            }
+            document.querySelectorAll('input[name="fs"]').forEach(r => {
+                r.checked = (r.value === d.suggested_fs);
+            });
+            const anyLabel = d.partitions.map(p => p.label).find(Boolean);
+            $("fmt-confirm-word").textContent = anyLabel || "FORMAT";
+            $("fmt-confirm-input").value = "";
+            $("fmt-new-label").value = "";
+            $("fmt-progress").hidden = true;
+            $("fmt-stage").classList.remove("err");
+            $("fmt-stage").textContent = "";
+            $("fmt-submit").disabled = true;
+            $("fmt-submit").textContent = "Format";
+            $("fmt-cancel").disabled = false;
+            $("format-dialog").showModal();
+        }
+
+        $("fmt-cancel").onclick = () => $("format-dialog").close();
+        $("fmt-confirm-input").oninput = (e) => {
+            const word = $("fmt-confirm-word").textContent;
+            $("fmt-submit").disabled = e.target.value !== word;
+        };
+        $("fmt-submit").onclick = startFormat;
+
+        async function startFormat() {
+            if (!currentDevice) return;
+            const fs = document.querySelector('input[name="fs"]:checked')?.value;
+            const label = $("fmt-new-label").value.trim();
+            if (!fs) return;
+            $("fmt-progress").hidden = false;
+            $("fmt-stage").classList.remove("err");
+            $("fmt-stage").textContent = "Starting…";
+            $("fmt-submit").disabled = true;
+            $("fmt-submit").textContent = "Formatting…";
+            $("fmt-cancel").disabled = true;
+
+            let res;
+            try {
+                res = await fetch(`/api/devices/${encodeURIComponent(currentDevice.name)}/format`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({fs, label}),
+                });
+                if (!res.ok) throw new Error(await res.text());
+            } catch (e) {
+                formatError("Failed to start: " + e.message);
+                return;
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = "";
+            try {
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, {stream: true});
+                    let idx;
+                    while ((idx = buf.indexOf("\n\n")) >= 0) {
+                        const chunk = buf.slice(0, idx);
+                        buf = buf.slice(idx + 2);
+                        const line = chunk.split("\n").find(l => l.startsWith("data: "));
+                        if (!line) continue;
+                        let ev;
+                        try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+                        $("fmt-stage").textContent = ev.message || ev.stage;
+                        if (ev.stage === "error") { formatError(ev.message || "unknown error"); return; }
+                        if (ev.stage === "done") {
+                            $("fmt-stage").textContent = "Done. Reloading…";
+                            setTimeout(() => location.reload(), 1500);
+                            return;
+                        }
+                    }
+                }
+            } catch (e) {
+                formatError("Stream error: " + e.message);
+            }
+        }
+
+        function formatError(msg) {
+            $("fmt-stage").classList.add("err");
+            $("fmt-stage").textContent = msg;
+            $("fmt-submit").disabled = false;
+            $("fmt-submit").textContent = "Format";
+            $("fmt-cancel").disabled = false;
+        }
+
+        load(true);
+        // Poll for new/removed devices. The sig check inside load() means
+        // we only touch the DOM when something actually changed.
+        setInterval(() => { if (!$("format-dialog").open) load(); }, 3000);
+    })();
+    </script>
+</body>
+</html>

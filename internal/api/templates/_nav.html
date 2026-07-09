@@ -1,0 +1,6 @@
+{{ define "nav" }}
+<nav class="topnav">
+    <a href="/" class="tab{{ if eq .Active "mounts" }} active{{ end }}">Mounts</a>
+    <a href="/devices" class="tab{{ if eq .Active "devices" }} active{{ end }}">Devices</a>
+</nav>
+{{ end }}

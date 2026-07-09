@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          check-latest: true
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race -count=1
+
+      - name: Host build (darwin/linux for editor + CI use)
+        run: go build ./...
+
+      - name: Cross-compile linux/arm64 (target platform)
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+            -trimpath -ldflags='-s -w' \
+            -o /tmp/airlockd.arm64 \
+            ./cmd/airlockd
+          file /tmp/airlockd.arm64
+          ls -lh /tmp/airlockd.arm64
+
+      - name: Shellcheck installer
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/install.sh
