@@ -143,6 +143,14 @@ jobs:
                       /usr/local/lib/android /usr/local/share/boost || true
           df -h /
 
+      # Register QEMU user-mode emulation via binfmt_misc so pi-gen's
+      # chroot can execute ARM binaries on this amd64 runner. Without
+      # this, pi-gen exits with "qemu-arm not found".
+      - name: Set up QEMU (arm + arm64)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm,arm64
+
       - name: Build image with pi-gen
         env:
           PIGEN_REF: master
