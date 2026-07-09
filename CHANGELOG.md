@@ -78,6 +78,22 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
   preserved.
 - Version + GitHub link in the footer of every page.
 
+### Added — appliance boot tuning
+
+- `AIRLOCK_FAST_BOOT=1` installer flag disables services not needed on
+  a headless appliance (bluetooth, triggerhappy, ModemManager, unused
+  samba flavours nmbd/winbind/samba-ad-dc, apt-daily timers, e2scrub,
+  dphys-swapfile, NetworkManager-wait-online, rpi-eeprom-update),
+  masks keyboard-setup / console-setup, disables cloud-init post-first-
+  boot, and adds `dtoverlay=disable-bt` to `/boot/firmware/config.txt`.
+  Measured impact on reference hardware (Pi 4 / Trixie): ~24 s → ~14 s.
+- `AIRLOCK_DISABLE_WIFI=1` installer flag disables the Wi-Fi radio
+  entirely via `dtoverlay=disable-wifi`. Installer sanity-checks that
+  `eth0` is up first — refuses if not, so it can't accidentally orphan
+  a Wi-Fi-only Pi. Saves an additional ~0.5 s of boot and gives you
+  Gigabit Ethernet throughput instead of ~200–400 Mbps Wi-Fi.
+- Documented under **Optional: faster boot** in `docs/install.md`.
+
 ### Added — security & sandboxing
 
 - `airlockd.service` gets a seccomp + prctl sandbox:

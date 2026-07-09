@@ -48,6 +48,8 @@ config without touching state on mounted drives.
 | `AIRLOCK_LOCAL_BINARY`  | Path to a locally-built binary — skips download                     |
 | `AIRLOCK_PREFIX`        | Install prefix (default `/usr/local`)                               |
 | `AIRLOCK_HARDEN_USB`    | `1` to also block HID / CDC-* USB drivers (see "Additional hardening") |
+| `AIRLOCK_FAST_BOOT`     | `1` to disable services + BT firmware not needed on a headless appliance |
+| `AIRLOCK_DISABLE_WIFI`  | `1` to disable the Wi-Fi radio (only if this Pi is on Ethernet)      |
 
 Example — install a pinned version:
 
@@ -281,62 +283,112 @@ Persistent settings (Wi-Fi credentials, hostname) should live on the FAT
 
 ## Optional: faster boot
 
-An unmodified Raspberry Pi OS Lite boots in ~25–40 s. On a headless
-appliance where you never plug in a screen or Bluetooth device, a lot of
-that is spent starting services you don't use. The following steps
-typically shave 8–15 s.
+An unmodified Raspberry Pi OS Lite Trixie on a Pi 4 boots in ~25 s to
+first SMB. Measurements from the reference hardware:
 
-**None of them affect Airlock or SSH.**
+| Configuration | Boot to `multi-user.target` |
+|---|---|
+| Stock Pi OS Lite Trixie | ~24.0 s |
+| + `AIRLOCK_FAST_BOOT=1` (services + `disable-bt`) | ~14.2 s |
+| + `AIRLOCK_DISABLE_WIFI=1` (Ethernet only) | ~13.7 s |
+| Booting from USB 3 SSD instead of SD | ~8–10 s (untested here) |
+
+The installer applies the first two if you set the env vars:
 
 ```sh
-# Bluetooth stack + UART attach — safe if you don't pair anything to the Pi.
-sudo systemctl disable --now hciuart.service bluetooth.service
+# Enable fast-boot at install time (safe on any Pi — never touches Wi-Fi):
+AIRLOCK_FAST_BOOT=1 \
+  curl -fsSL https://github.com/emdzej/airlock/releases/latest/download/install.sh | sudo -E bash
 
-# Old hotkey daemon — irrelevant on a headless box.
-sudo systemctl disable --now triggerhappy.service triggerhappy.socket
+# If you're on Ethernet and don't need Wi-Fi at all, add DISABLE_WIFI too.
+# The installer refuses if eth0 isn't up — it won't orphan your Pi.
+AIRLOCK_FAST_BOOT=1 AIRLOCK_DISABLE_WIFI=1 \
+  curl -fsSL https://github.com/emdzej/airlock/releases/latest/download/install.sh | sudo -E bash
+```
 
-# Cellular / mobile broadband — Raspberry Pi has neither by default.
-sudo systemctl disable --now ModemManager.service 2>/dev/null || true
+### What `AIRLOCK_FAST_BOOT=1` does
 
-# Background apt updates. You'll want to run `apt upgrade` deliberately
-# rather than during a random boot.
-sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer
+Disables the following services (none of them affect Airlock or SSH):
 
-# Console font / keyboard config — nothing to configure on a headless box.
+- `bluetooth`, `hciuart` — Bluetooth stack + UART attach
+- `triggerhappy` (+ its socket) — hotkey daemon, headless-irrelevant
+- `ModemManager` — cellular / broadband modem (Pi has neither built-in)
+- `nmbd`, `samba-ad-dc`, `winbind` — Samba flavours we don't use;
+  `smbd` (which we do use) stays enabled
+- `apt-daily.timer`, `apt-daily-upgrade.timer` — background updates
+- `e2scrub_reap`, `e2scrub_all.timer` — ext4 quota housekeeping
+- `dphys-swapfile` — old-style swapfile (zram is enough on Trixie)
+- `NetworkManager-wait-online` — the ~5 s wait for connectivity;
+  `smbd` / `avahi` / `airlockd` all bind to `0.0.0.0` and handle a
+  slightly-late network cleanly
+- `rpi-eeprom-update` — on-demand only, no need to run on every boot
+- `keyboard-setup`, `console-setup` — masked (no console anyway)
+
+Also disables cloud-init (touches `/etc/cloud/cloud-init.disabled`)
+because it's already done its first-boot job by the time you run the
+installer.
+
+Also adds `dtoverlay=disable-bt` to `/boot/firmware/config.txt` — skips
+Bluetooth radio init (~1 s of kernel time). Takes effect on next reboot.
+
+### What `AIRLOCK_DISABLE_WIFI=1` does
+
+Adds `dtoverlay=disable-wifi` to `/boot/firmware/config.txt`, disabling
+the Wi-Fi radio at firmware level. Takes effect on next reboot.
+
+**Only enable this if the Pi is connected via Ethernet.** The installer
+sanity-checks `eth0` is up before writing the config; if not, it aborts
+rather than orphaning your Pi.
+
+**Ethernet vs Wi-Fi on Pi 4:** wired Gigabit tops out around 940 Mbps
+real; the Wi-Fi 5 radio does ~200–400 Mbps under ideal conditions. If
+you're shuffling large files (photo/video card offload), Ethernet also
+delivers lower latency and doesn't share airtime with your neighbours.
+
+### Doing it manually
+
+If you'd rather not set env vars, the same effect from a shell:
+
+```sh
+# Service disables
+sudo systemctl disable --now bluetooth.service hciuart.service \
+    triggerhappy.service triggerhappy.socket \
+    ModemManager.service \
+    nmbd.service samba-ad-dc.service winbind.service \
+    apt-daily.timer apt-daily-upgrade.timer \
+    e2scrub_reap.service e2scrub_all.timer \
+    dphys-swapfile.service \
+    NetworkManager-wait-online.service \
+    rpi-eeprom-update.service 2>/dev/null
+
 sudo systemctl mask keyboard-setup.service console-setup.service
+sudo touch /etc/cloud/cloud-init.disabled
 
-# If you already have zram-swap (default on Trixie), the classic swap
-# file service is redundant.
-sudo systemctl disable --now dphys-swapfile.service 2>/dev/null || true
+# Firmware overlays (take effect after reboot)
+echo 'dtoverlay=disable-bt'   | sudo tee -a /boot/firmware/config.txt
+# Only if this Pi is on Ethernet:
+echo 'dtoverlay=disable-wifi' | sudo tee -a /boot/firmware/config.txt
+
+sudo reboot
 ```
 
-Deeper cuts via `/boot/firmware/config.txt` (needs a reboot):
+### Measure before and after
 
 ```sh
-# Fully disable the Bluetooth radio — saves ~2 s of firmware init.
-echo 'dtoverlay=disable-bt' | sudo tee -a /boot/firmware/config.txt
-
-# If you're on Ethernet and don't need Wi-Fi at all:
-# echo 'dtoverlay=disable-wifi' | sudo tee -a /boot/firmware/config.txt
+systemd-analyze                    # overall time
+systemd-analyze blame              # per-service, largest first
+systemd-analyze critical-chain     # what blocks what
 ```
 
-Analyze your boot with `systemd-analyze` to see the biggest offenders:
-
-```sh
-systemd-analyze                     # overall time
-systemd-analyze blame               # per-service time (largest first)
-systemd-analyze critical-chain      # what blocks what
-```
-
-**Don't disable these — they are load-bearing:**
+### Don't disable these — they are load-bearing
 
 - `avahi-daemon.service` (mDNS discovery, `airlock.local`)
 - `smbd.service` (SMB shares)
 - `airlockd.service` (obviously)
-- `systemd-networkd.service` / `NetworkManager.service`, whichever your
-  distro uses to bring up Wi-Fi/Ethernet
-- `systemd-timesyncd.service` (keeps timestamps sane)
-- `ssh.service` (if you use it — you probably do)
+- `NetworkManager.service` (or `systemd-networkd`, whichever brings up
+  the interface)
+- `systemd-timesyncd.service` (log timestamps)
+- `ssh.service` (if you rely on SSH — you probably do)
 
 ## Optional: GPIO button + LED
 

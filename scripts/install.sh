@@ -13,6 +13,11 @@
 #   AIRLOCK_LOCAL_BINARY  path to a locally-built binary (skips download)
 #   AIRLOCK_PREFIX        install prefix (default: /usr/local)
 #   AIRLOCK_HARDEN_USB    set to 1 to block HID / CDC-* USB drivers (opt-in)
+#   AIRLOCK_FAST_BOOT     set to 1 to disable services + BT firmware not
+#                         needed on a headless appliance (~7-10s off boot)
+#   AIRLOCK_DISABLE_WIFI  set to 1 to disable the Wi-Fi radio via config.txt
+#                         (only if this Pi uses Ethernet — otherwise it
+#                         will become unreachable after reboot)
 #
 # The script is idempotent — safe to re-run to upgrade or repair an install.
 
@@ -23,6 +28,8 @@ VERSION="${AIRLOCK_VERSION:-}"
 PREFIX="${AIRLOCK_PREFIX:-/usr/local}"
 LOCAL_BINARY="${AIRLOCK_LOCAL_BINARY:-}"
 HARDEN_USB="${AIRLOCK_HARDEN_USB:-0}"
+FAST_BOOT="${AIRLOCK_FAST_BOOT:-0}"
+DISABLE_WIFI="${AIRLOCK_DISABLE_WIFI:-0}"
 
 # --- output helpers ---
 if [[ -t 2 ]]; then
@@ -199,6 +206,65 @@ AVAHI
 
 # --- Mount base dir ---
 mkdir -p /mnt/airlock
+
+# --- Optional: fast-boot service disables ---
+if [[ "$FAST_BOOT" == "1" ]]; then
+    log "applying fast-boot optimizations (AIRLOCK_FAST_BOOT=1)"
+    # Services not needed on a headless airlock appliance. Failures are
+    # ignored — some names differ across Trixie / Bookworm / Raspbian
+    # versions or aren't installed at all.
+    for svc in bluetooth.service hciuart.service \
+               triggerhappy.service triggerhappy.socket \
+               ModemManager.service \
+               nmbd.service samba-ad-dc.service winbind.service \
+               apt-daily.timer apt-daily-upgrade.timer \
+               e2scrub_reap.service e2scrub_all.timer \
+               dphys-swapfile.service \
+               NetworkManager-wait-online.service \
+               rpi-eeprom-update.service; do
+        systemctl disable --now "$svc" >/dev/null 2>&1 || true
+    done
+    for svc in keyboard-setup.service console-setup.service; do
+        systemctl mask "$svc" >/dev/null 2>&1 || true
+    done
+    # Cloud-init has done its first-boot job by the time you're running
+    # this installer. Turn it off so it stops adding ~2 s to every boot.
+    if [ -d /etc/cloud ]; then
+        touch /etc/cloud/cloud-init.disabled
+        for svc in cloud-init-main.service cloud-init-local.service \
+                   cloud-init-network.service cloud-config.service \
+                   cloud-final.service; do
+            systemctl disable "$svc" >/dev/null 2>&1 || true
+        done
+    fi
+    # Firmware-level: skip Bluetooth radio init (~1 s saved in kernel time).
+    if [ -f /boot/firmware/config.txt ] && ! grep -q "^dtoverlay=disable-bt" /boot/firmware/config.txt; then
+        echo "dtoverlay=disable-bt" >> /boot/firmware/config.txt
+        log "added dtoverlay=disable-bt to /boot/firmware/config.txt"
+    fi
+    warn "fast-boot done — reboot to apply firmware changes"
+fi
+
+# --- Optional: disable Wi-Fi radio (Ethernet-only appliance) ---
+if [[ "$DISABLE_WIFI" == "1" ]]; then
+    log "disabling Wi-Fi radio (AIRLOCK_DISABLE_WIFI=1)"
+    if [ ! -f /boot/firmware/config.txt ]; then
+        warn "/boot/firmware/config.txt not found; skipping Wi-Fi disable"
+    else
+        # Only proceed if this Pi actually has an Ethernet link — otherwise
+        # disabling Wi-Fi orphans the box.
+        if ip -brief link show eth0 2>/dev/null | grep -q "UP"; then
+            if ! grep -q "^dtoverlay=disable-wifi" /boot/firmware/config.txt; then
+                echo "dtoverlay=disable-wifi" >> /boot/firmware/config.txt
+                log "added dtoverlay=disable-wifi (takes effect on next reboot)"
+            else
+                log "dtoverlay=disable-wifi already present"
+            fi
+        else
+            err "eth0 is not up — refusing to disable Wi-Fi (would orphan this Pi)"
+        fi
+    fi
+fi
 
 # --- Optional USB class blocklist ---
 # When AIRLOCK_HARDEN_USB=1, install the modprobe file that refuses HID
