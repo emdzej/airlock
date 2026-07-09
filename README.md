@@ -73,7 +73,9 @@ Not designed for enterprise / managed / DLP-controlled networks. See the
 Once done: open `http://<hostname>.local/` in a browser, or connect via
 `smb://<hostname>.local/` from Finder / Explorer / Files.
 
-See the [**install guide**](docs/install.md) for a detailed manual walkthrough,
+See the [**user guide**](docs/guide.md) for day-to-day usage of every
+feature (Mounts / Devices tabs, file browser, format, flash, dump, fsck,
+volume relabel), and the [**install guide**](docs/install.md) for setup,
 GPIO wiring, uninstall, and troubleshooting.
 
 **Building from source (for a fresh image, or to iterate on the daemon):**
@@ -92,7 +94,7 @@ GPIO wiring, uninstall, and troubleshooting.
 - `scripts/install.sh` — installer for an existing Raspberry Pi
 - `.github/workflows/` — CI (build/test) and Release (tag → binaries)
 - `CHANGELOG.md` — release notes
-- `docs/` — [install guide](docs/install.md), [backlog](docs/backlog.md)
+- `docs/` — [user guide](docs/guide.md), [install guide](docs/install.md), [backlog](docs/backlog.md)
 
 ## Build
 
