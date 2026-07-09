@@ -15,11 +15,12 @@ just wants a tidy way to move files off a card without hunting for a reader.
 
 ## Status
 
-Version **0.1.0** — first tag. Runs on real hardware (Raspberry Pi 4 on
-Debian 13 / Trixie). Mounts, file management, format, and volume relabel
-all work; the flashable pi-gen image still needs a full build round-trip.
-See [`CHANGELOG.md`](CHANGELOG.md) for what's in the release and
-[`docs/milestones.md`](docs/milestones.md) for how we got here.
+Version **0.2.0** — first tag. Runs on real hardware (Raspberry Pi 4 on
+Debian 13 / Trixie). Mounts, file management, format, volume relabel,
+opt-in USB / boot / Wi-Fi hardening all work; the flashable pi-gen image
+still needs a full build round-trip. See [`CHANGELOG.md`](CHANGELOG.md)
+for what's in the release and [`docs/milestones.md`](docs/milestones.md)
+for how we got here.
 
 ## Design
 

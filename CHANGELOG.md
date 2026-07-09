@@ -3,13 +3,81 @@
 All notable changes to Airlock are documented here.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
-and this project uses semantic versioning starting at 0.x.
+and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
+changes are allowed between minor versions.
+
+## [0.2.0] — 2026-07-09
+
+Hardware verification + hardening + boot-time tuning pass. All 0.1.0
+functionality still applies; this release focuses on making the appliance
+faster to boot, safer to compromise, and more visible in the Devices tab.
+
+### Added
+
+- **Mount button** on the Devices tab for USB partitions that have a
+  supported filesystem but aren't currently mounted by airlock. Backed
+  by `POST /api/partitions/{name}/mount` — safety-gated to USB-attached
+  devices, fires `udevadm trigger --action=add` and the daemon's normal
+  event handler picks up the mount.
+- **`AIRLOCK_FAST_BOOT=1` installer flag.** Disables services not needed
+  on a headless appliance (bluetooth, hciuart, triggerhappy, ModemManager,
+  unused Samba flavours `nmbd`/`winbind`/`samba-ad-dc`, `apt-daily`
+  timers, `e2scrub`, `dphys-swapfile`, `NetworkManager-wait-online`,
+  `rpi-eeprom-update`); masks `keyboard-setup` and `console-setup`;
+  disables cloud-init post-first-boot; adds `dtoverlay=disable-bt` to
+  `/boot/firmware/config.txt` to skip Bluetooth radio init.
+- **`AIRLOCK_DISABLE_WIFI=1` installer flag.** Adds `dtoverlay=disable-wifi`
+  after checking that `eth0` is up — refuses to run if not, so it can't
+  accidentally orphan a Wi-Fi-only Pi.
+- **`AIRLOCK_HARDEN_USB=1` installer flag** plus `scripts/modprobe-airlock.conf`.
+  Blocks HID (keyboards / mice) and CDC-* (USB Ethernet / serial) driver
+  binding at attach time while leaving USB mass storage alone —
+  neutralizes "BadUSB" / "USB Rubber Ducky" attacks against the console.
+- **systemd seccomp + prctl sandbox** on `airlockd.service`:
+  `NoNewPrivileges`, `LockPersonality`, `RestrictSUIDSGID`,
+  `RestrictRealtime`, `RestrictNamespaces`,
+  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`.
+  Mount-namespace-inducing directives are deliberately excluded (see
+  Fixed below).
+- **New docs sections** in `docs/install.md`: **Optional: faster boot**
+  (with per-service explanation, measured impact, and a manual recipe)
+  and **Additional hardening** (systemd sandbox + optional USB blocklist).
+- Devices tab payload now includes `can_mount` and `can_relabel` flags
+  per partition, so the UI shows only the actions that make sense.
+
+### Fixed
+
+- **SMB shares appeared empty when the systemd sandbox created a private
+  mount namespace.** `ProtectSystem=strict` + `ReadWritePaths` bind-mounted
+  `/mnt/airlock` into the service's own namespace as slave, so mounts
+  airlockd made were invisible to smbd running in the host namespace.
+  `MountFlags=shared` didn't fix it (a slave mount only propagates
+  host→service, not back). Sandbox reduced to seccomp/prctl only —
+  no private mount namespace, mounts propagate correctly.
+- Format operation "device or resource busy" during `wipefs` — added a
+  device quarantine so the daemon ignores auto-mount events for the
+  target device between unmount and mkfs.
+- `udevadm trigger --subsystem-match=block` no longer accidentally
+  matches the Pi's own boot media (`mmcblk*`) — the udev rule requires
+  `ID_BUS=usb`, and every mount pass additionally cross-checks
+  `/proc/self/mountinfo` before touching a device.
+- Windows-friendly Copy button on the Mounts tab now sends
+  `\\host\share` on Windows and `smb://host/share` everywhere else.
+
+### Boot-time measurements (Pi 4 / Trixie reference hardware)
+
+| Configuration | `multi-user.target` reached |
+|---|---|
+| Stock Pi OS Lite Trixie | 24.0 s |
+| + `AIRLOCK_FAST_BOOT=1` | 14.2 s |
+| + `AIRLOCK_DISABLE_WIFI=1` | 13.7 s |
 
 ## [0.1.0] — 2026-07-09
 
-First public tag. Airlock is a network card reader appliance for the
-Raspberry Pi 4: plug in USB media, expose it over SMB and a small web UI,
-manage it (browse / upload / format / relabel) from any device on your LAN.
+First internal snapshot. Airlock is a network card reader appliance for
+the Raspberry Pi 4: plug in USB media, expose it over SMB and a small
+web UI, manage it (browse / upload / format / relabel) from any device
+on your LAN.
 
 ### Added — daemon
 
@@ -22,9 +90,6 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
 - Read-only detection: media flagged read-only in `/sys/class/block/*/ro`
   (write-protect switch, iso9660, etc.) is mounted RO and refuses writes
   via HTTP / SMB.
-- Safety guards against ever exposing the Pi's own boot media: udev rule
-  matches only USB `sd*` devices, and every mount pass cross-checks
-  `/proc/self/mountinfo` for prior mounts.
 - Dynamic Samba shares: `airlockd` regenerates a single include file at
   `/etc/samba/smb.conf.d/airlock.conf` on each drive change and calls
   `smbcontrol reload-config` — no `smbd` restart.
@@ -42,14 +107,15 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
   `_device-info._tcp` — the last one carries `model=TimeCapsule6,106`
   so macOS Finder renders the host as a network drive instead of a
   generic computer.
+- Every mount carries `nosuid,nodev,noexec` — no binary from the media
+  can execute, gain privileges, or open a device node.
 - `sync()`-on-shutdown; no automatic unmount on shutdown so a systemd
   restart never yanks a user's data.
 
 ### Added — HTTP UI (`http://<host>.local/`)
 
 - **Mounts** tab: current shares with per-share Eject, clickable
-  `smb://…` links, and a Copy button that puts the platform-appropriate
-  form on the clipboard (`\\host\share` on Windows, `smb://…` elsewhere).
+  `smb://…` links, and a Copy button.
 - **Devices** tab: enumerates every USB block device via `lsblk -bJ`,
   showing model, vendor, serial, size, partition-table type, and every
   partition (mounted or not). Per-device Eject / Format… actions,
@@ -60,16 +126,10 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
   and drag-drop of files or folders — folder tree is preserved on the
   target. One HTTP request per file with per-file progress; the progress
   card has an expandable Details panel showing status of each item.
-- **Format** modal (Devices tab) with:
-  - filesystem picker (FAT32 / exFAT / NTFS / ext4) auto-selected by
-    device size (FAT32 <32 GB, exFAT ≥32 GB);
-  - new-label field with per-FS length limits;
-  - type-to-confirm safety (matches an existing label, or the literal
-    word `FORMAT` if the drive is unlabeled);
-  - SSE-streamed progress (`unmount → wipe → partition → rescan → mkfs
-    → done`);
-  - device quarantine while the operation runs, so the daemon does not
-    auto-mount the fresh partition mid-mkfs.
+- **Format** modal (Devices tab): filesystem picker (FAT32 / exFAT /
+  NTFS / ext4) auto-selected by size, new-label field with per-FS length
+  limits, type-to-confirm safety, SSE-streamed progress
+  (`unmount → wipe → partition → rescan → mkfs → done`).
 - **Volume relabel** per partition (Devices tab): unmounts, runs the
   FS-specific tool (`fatlabel`, `exfatlabel`, `ntfslabel`, `e2label`),
   triggers udev to remount under the new label.
@@ -77,42 +137,6 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
   the underlying JSON differs — no flashing reloads, scroll/hover state
   preserved.
 - Version + GitHub link in the footer of every page.
-
-### Added — appliance boot tuning
-
-- `AIRLOCK_FAST_BOOT=1` installer flag disables services not needed on
-  a headless appliance (bluetooth, triggerhappy, ModemManager, unused
-  samba flavours nmbd/winbind/samba-ad-dc, apt-daily timers, e2scrub,
-  dphys-swapfile, NetworkManager-wait-online, rpi-eeprom-update),
-  masks keyboard-setup / console-setup, disables cloud-init post-first-
-  boot, and adds `dtoverlay=disable-bt` to `/boot/firmware/config.txt`.
-  Measured impact on reference hardware (Pi 4 / Trixie): ~24 s → ~14 s.
-- `AIRLOCK_DISABLE_WIFI=1` installer flag disables the Wi-Fi radio
-  entirely via `dtoverlay=disable-wifi`. Installer sanity-checks that
-  `eth0` is up first — refuses if not, so it can't accidentally orphan
-  a Wi-Fi-only Pi. Saves an additional ~0.5 s of boot and gives you
-  Gigabit Ethernet throughput instead of ~200–400 Mbps Wi-Fi.
-- Documented under **Optional: faster boot** in `docs/install.md`.
-
-### Added — security & sandboxing
-
-- `airlockd.service` gets a seccomp + prctl sandbox:
-  `NoNewPrivileges`, `LockPersonality`, `RestrictSUIDSGID`,
-  `RestrictRealtime`, `RestrictNamespaces`, and
-  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`.
-  Deliberately no `ProtectSystem` / `ProtectHome` / `PrivateTmp` /
-  `ReadWritePaths` / `Protect{KernelTunables,KernelModules,ControlGroups}`
-  — each of those creates a private mount namespace which would trap
-  our mounts away from `smbd` and leave SMB shares empty.
-- Every mount already carried `nosuid,nodev,noexec` in 0.1.0; that
-  guarantee is now called out in the docs alongside the sandbox.
-- Optional USB device-class blocklist (`scripts/modprobe-airlock.conf`)
-  refuses HID (keyboards / mice) and CDC-* (USB Ethernet / serial)
-  drivers at attach time while leaving USB mass storage alone —
-  neutralizes "BadUSB" / "USB Rubber Ducky" attacks against the
-  console. Opt-in via `AIRLOCK_HARDEN_USB=1` in the installer or by
-  copying the file to `/etc/modprobe.d/`. Documented under
-  **Additional hardening** in `docs/install.md`.
 
 ### Added — packaging & tooling
 
@@ -123,8 +147,7 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
   idempotent, downloads a matching arm64 binary from GitHub Releases,
   drops the systemd unit / udev rule / Samba / Avahi configuration,
   backs up any existing `smb.conf` before overwriting, enables and
-  starts everything. Environment overrides for version, custom URL,
-  local binary path, and install prefix.
+  starts everything.
 - Manual install guide (`docs/install.md`) covering prerequisites,
   quick-install one-liner, step-by-step manual install, macOS/Linux/
   Windows client instructions, GPIO wiring diagram, uninstall, and

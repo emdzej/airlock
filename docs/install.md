@@ -76,12 +76,12 @@ sudo apt-get install -y \
 
 ### 2. Download the binary
 
-Replace `0.1.0` with the release tag you want. See the
+Replace `0.2.0` with the release tag you want. See the
 [releases page](https://github.com/emdzej/airlock/releases) for available
 tags.
 
 ```sh
-V=0.1.0
+V=0.2.0
 curl -fsSL "https://github.com/emdzej/airlock/releases/download/$V/airlockd-$V-linux-arm64.tar.gz" \
     | sudo tar -xz -C /usr/local/bin airlockd
 sudo chmod 0755 /usr/local/bin/airlockd
