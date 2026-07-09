@@ -166,6 +166,10 @@ cat > /etc/samba/smb.conf <<'SMB'
     security = user
     server min protocol = SMB2
     client min protocol = SMB2
+    # Don't let Samba publish its own mDNS — it uses model=MacSamba which
+    # Apple has no icon for. Our Avahi service publishes _device-info
+    # separately with a proper model= TXT record.
+    multicast dns register = no
     load printers = no
     printing = bsd
     printcap name = /dev/null

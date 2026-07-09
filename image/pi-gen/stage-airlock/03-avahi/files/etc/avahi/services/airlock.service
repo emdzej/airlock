@@ -3,10 +3,17 @@
 <!--
   Avahi advertisements for airlock.
 
-  _device-info._tcp with model=TimeCapsule6,106 tells macOS Finder to show
-  this host with the Time Capsule icon in the Network sidebar rather than
-  the generic "computer" icon. It has no port (port 0) — the record only
-  carries metadata via the TXT payload.
+  The `_device-info._tcp` record with `model=MacPro7,1` tells macOS
+  Finder to render this host with the Mac Pro tower icon in the Network
+  sidebar rather than the generic computer/monitor icon. The
+  `@ECOLOR=226,226,224` suffix is Apple's colour hint (light silver) —
+  the same trick TrueNAS uses. Port 0: this record only carries
+  metadata via the TXT payload.
+
+  For Finder to pick up our model, Samba's own mDNS publisher must be
+  disabled (`multicast dns register = no` in smb.conf). Otherwise Samba
+  ships its own _device-info record with model=MacSamba and shadows
+  ours.
 -->
 <service-group>
   <name replace-wildcards="yes">Airlock on %h</name>
@@ -21,6 +28,6 @@
   <service>
     <type>_device-info._tcp</type>
     <port>0</port>
-    <txt-record>model=TimeCapsule6,106</txt-record>
+    <txt-record>model=MacPro7,1@ECOLOR=226,226,224</txt-record>
   </service>
 </service-group>
