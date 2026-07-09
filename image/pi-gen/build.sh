@@ -16,7 +16,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_DIR="${REPO_ROOT}/image/pi-gen"
 PIGEN_DIR="${IMAGE_DIR}/.pi-gen"
-PIGEN_REF="${PIGEN_REF:-arm64}"    # pi-gen branch; 'arm64' produces 64-bit images
+PIGEN_REF="${PIGEN_REF:-master}"   # master supports arm64 via ARCH= in config
 
 if [ ! -d "${PIGEN_DIR}" ]; then
     echo ">>> Cloning pi-gen (${PIGEN_REF}) into ${PIGEN_DIR}"
@@ -37,8 +37,12 @@ rm -rf "${STAGE_DST}"
 cp -a "${STAGE_SRC}" "${STAGE_DST}"
 
 # Stage the freshly-built binary into the stage's files/ tree.
-install -D -m 0755 "${REPO_ROOT}/bin/airlockd.arm64" \
-    "${STAGE_DST}/01-airlockd/files/usr/local/bin/airlockd"
+# Portable across GNU (Linux) and BSD (macOS) install: mkdir + cp
+# rather than `install -D`, which macOS's BSD install lacks.
+STAGE_BIN_DIR="${STAGE_DST}/01-airlockd/files/usr/local/bin"
+mkdir -p "${STAGE_BIN_DIR}"
+cp "${REPO_ROOT}/bin/airlockd.arm64" "${STAGE_BIN_DIR}/airlockd"
+chmod 0755 "${STAGE_BIN_DIR}/airlockd"
 
 # Copy the pi-gen config in.
 cp "${IMAGE_DIR}/config" "${PIGEN_DIR}/config"
@@ -48,7 +52,20 @@ for s in stage3 stage4 stage5; do
     touch "${PIGEN_DIR}/${s}/SKIP" "${PIGEN_DIR}/${s}/SKIP_IMAGES"
 done
 
-# Build.
+# Build. Remove any leftover work container from a previous failed run —
+# pi-gen refuses to start if `pigen_work` already exists and we didn't
+# ask it to CONTINUE. Ignore errors; the common case is "no such container".
+docker rm -v pigen_work >/dev/null 2>&1 || true
+
+# On arm64 hosts (Apple Silicon, arm64 Linux) pi-gen's `setarch linux32`
+# in stage0 fails — the arm64 kernel can't set the 32-bit personality
+# needed. Force the pi-gen container to run as amd64, which Docker
+# emulates via QEMU on Apple Silicon. Slower but reliably functional.
+if [ "$(uname -m)" = "arm64" ] || [ "$(uname -m)" = "aarch64" ]; then
+    export DOCKER_DEFAULT_PLATFORM=linux/amd64
+    echo ">>> arm64 host detected — forcing pigen container to linux/amd64"
+fi
+
 cd "${PIGEN_DIR}"
 echo ">>> Running pi-gen build (this takes ~30 minutes)"
 ./build-docker.sh

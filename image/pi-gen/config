@@ -2,7 +2,7 @@
 # Referenced by image/pi-gen/build.sh.
 
 IMG_NAME="airlock"
-RELEASE="bookworm"
+RELEASE="trixie"
 DEPLOY_COMPRESSION="xz"
 
 # arm64 for Pi 4 / Pi 5.
@@ -18,13 +18,18 @@ TIMEZONE_DEFAULT="Etc/UTC"
 # Networking / identity.
 TARGET_HOSTNAME="airlock"
 
-# We ship without a default user password. Pi Imager's OS customization
-# dialog (or a firstrun.sh manually placed on /boot) is expected to configure
-# SSH keys and Wi-Fi at flash time.
+# Default local user is airlock/airlock.
+#
+# WEAK DEFAULT — users MUST change it on first boot with `passwd`,
+# or set their own credentials via Pi Imager's OS customization dialog
+# (which rewrites firstrun.sh on the boot partition before flashing).
+# SSH is enabled and accepts passwords; we can't ship a baked-in public
+# key that would work for everyone, and disabling SSH entirely would
+# lock out users who don't run Pi Imager.
 FIRST_USER_NAME="airlock"
+FIRST_USER_PASS="airlock"
 DISABLE_FIRST_BOOT_USER_RENAME=1
 ENABLE_SSH=1
-PUBKEY_ONLY_SSH=1
 
 # Only build lite + our stage. No desktop.
 STAGE_LIST="stage0 stage1 stage2 stage-airlock"
