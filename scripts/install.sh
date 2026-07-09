@@ -84,7 +84,7 @@ log "installing prerequisite packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-    samba samba-common-bin \
+    samba samba-common-bin samba-vfs-modules \
     avahi-daemon libnss-mdns \
     exfatprogs ntfs-3g dosfstools e2fsprogs hfsprogs \
     gdisk parted util-linux \
@@ -170,6 +170,15 @@ cat > /etc/samba/smb.conf <<'SMB'
     # Apple has no icon for. Our Avahi service publishes _device-info
     # separately with a proper model= TXT record.
     multicast dns register = no
+    # macOS Finder chooses the sidebar icon from the AAPL SMB2 create-
+    # context served by Samba's fruit VFS module (needs samba-vfs-modules).
+    # Without this, we still get a generic computer icon regardless of
+    # what we advertise over mDNS.
+    vfs objects = fruit streams_xattr
+    fruit:aapl = yes
+    fruit:model = MacPro7,1
+    fruit:metadata = stream
+    fruit:posix_rename = yes
     load printers = no
     printing = bsd
     printcap name = /dev/null
