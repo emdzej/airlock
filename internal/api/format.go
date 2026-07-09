@@ -63,17 +63,18 @@ type devicePayload struct {
 }
 
 type partitionPayload struct {
-	Name             string `json:"name"`
-	SizeBytes        int64  `json:"size_bytes"`
-	SizeHuman        string `json:"size_human"`
-	FSType           string `json:"fs_type"`
-	Label            string `json:"label"`
-	UUID             string `json:"uuid"`
-	MountPoint       string `json:"mount_point"`
-	IsAirlock        bool   `json:"is_airlock"`
-	ShareName        string `json:"share_name,omitempty"` // airlock share, if mounted by us
-	CanRelabel       bool   `json:"can_relabel"`          // fs supports airlock relabel
-	MaxLabelLen      int    `json:"max_label_len"`        // 0 if no relabel support
+	Name        string `json:"name"`
+	SizeBytes   int64  `json:"size_bytes"`
+	SizeHuman   string `json:"size_human"`
+	FSType      string `json:"fs_type"`
+	Label       string `json:"label"`
+	UUID        string `json:"uuid"`
+	MountPoint  string `json:"mount_point"`
+	IsAirlock   bool   `json:"is_airlock"`
+	ShareName   string `json:"share_name,omitempty"` // airlock share, if mounted by us
+	CanRelabel  bool   `json:"can_relabel"`          // fs supports airlock relabel
+	MaxLabelLen int    `json:"max_label_len"`        // 0 if no relabel support
+	CanMount    bool   `json:"can_mount"`            // FS supported and not currently mounted
 }
 
 func (s *Server) devicePayload(d devices.Device) devicePayload {
@@ -102,6 +103,7 @@ func (s *Server) devicePayload(d devices.Device) devicePayload {
 			ShareName:   shareByKernel[p.Name],
 			CanRelabel:  !d.ReadOnly && label.SupportedForFS(p.FSType),
 			MaxLabelLen: label.MaxLenForFS(p.FSType),
+			CanMount:    !p.IsAirlock && p.MountPoint == "" && mount.SupportedFilesystems[normalizeFSName(p.FSType)],
 		})
 	}
 	suggested := "vfat"

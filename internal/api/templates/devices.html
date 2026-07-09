@@ -277,6 +277,13 @@
             li.appendChild(size);
             const action = document.createElement("span");
             action.className = "part-action";
+            if (p.can_mount) {
+                const btn = document.createElement("button");
+                btn.textContent = "Mount";
+                btn.title = "Mount this partition and expose it via SMB";
+                btn.onclick = () => mountPartition(p.name, btn);
+                action.appendChild(btn);
+            }
             if (p.can_relabel) {
                 const btn = document.createElement("button");
                 btn.textContent = "Rename";
@@ -286,6 +293,24 @@
             }
             li.appendChild(action);
             return li;
+        }
+
+        async function mountPartition(name, btn) {
+            btn.disabled = true;
+            btn.textContent = "Mounting…";
+            try {
+                const r = await fetch(`/api/partitions/${encodeURIComponent(name)}/mount`, {method: "POST"});
+                if (!r.ok) {
+                    const body = await r.text();
+                    let msg = body;
+                    try { msg = JSON.parse(body).error || body; } catch {}
+                    alert("Mount failed: " + msg);
+                }
+            } catch (e) {
+                alert("Mount failed: " + e.message);
+            } finally {
+                lastSig = ""; load(true);
+            }
         }
 
         function openRelabel(p) {

@@ -102,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/devices/{parent}/format", s.handleFormat)
 	// Partition-level operations
 	mux.HandleFunc("POST /api/partitions/{name}/label", s.handleSetLabel)
+	mux.HandleFunc("POST /api/partitions/{name}/mount", s.handleMountPartition)
 	// Devices HTML page
 	mux.HandleFunc("GET /devices", s.handleDevicesPage)
 	return mux

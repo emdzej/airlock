@@ -279,6 +279,65 @@ sudo reboot
 Persistent settings (Wi-Fi credentials, hostname) should live on the FAT
 `/boot/firmware` partition, which stays writable.
 
+## Optional: faster boot
+
+An unmodified Raspberry Pi OS Lite boots in ~25–40 s. On a headless
+appliance where you never plug in a screen or Bluetooth device, a lot of
+that is spent starting services you don't use. The following steps
+typically shave 8–15 s.
+
+**None of them affect Airlock or SSH.**
+
+```sh
+# Bluetooth stack + UART attach — safe if you don't pair anything to the Pi.
+sudo systemctl disable --now hciuart.service bluetooth.service
+
+# Old hotkey daemon — irrelevant on a headless box.
+sudo systemctl disable --now triggerhappy.service triggerhappy.socket
+
+# Cellular / mobile broadband — Raspberry Pi has neither by default.
+sudo systemctl disable --now ModemManager.service 2>/dev/null || true
+
+# Background apt updates. You'll want to run `apt upgrade` deliberately
+# rather than during a random boot.
+sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer
+
+# Console font / keyboard config — nothing to configure on a headless box.
+sudo systemctl mask keyboard-setup.service console-setup.service
+
+# If you already have zram-swap (default on Trixie), the classic swap
+# file service is redundant.
+sudo systemctl disable --now dphys-swapfile.service 2>/dev/null || true
+```
+
+Deeper cuts via `/boot/firmware/config.txt` (needs a reboot):
+
+```sh
+# Fully disable the Bluetooth radio — saves ~2 s of firmware init.
+echo 'dtoverlay=disable-bt' | sudo tee -a /boot/firmware/config.txt
+
+# If you're on Ethernet and don't need Wi-Fi at all:
+# echo 'dtoverlay=disable-wifi' | sudo tee -a /boot/firmware/config.txt
+```
+
+Analyze your boot with `systemd-analyze` to see the biggest offenders:
+
+```sh
+systemd-analyze                     # overall time
+systemd-analyze blame               # per-service time (largest first)
+systemd-analyze critical-chain      # what blocks what
+```
+
+**Don't disable these — they are load-bearing:**
+
+- `avahi-daemon.service` (mDNS discovery, `airlock.local`)
+- `smbd.service` (SMB shares)
+- `airlockd.service` (obviously)
+- `systemd-networkd.service` / `NetworkManager.service`, whichever your
+  distro uses to bring up Wi-Fi/Ethernet
+- `systemd-timesyncd.service` (keeps timestamps sane)
+- `ssh.service` (if you use it — you probably do)
+
 ## Optional: GPIO button + LED
 
 Wire a momentary switch to **GPIO 17** (physical pin 11) with the other lead

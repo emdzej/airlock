@@ -5,9 +5,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/emdzej/airlock/internal/devices"
 	"github.com/emdzej/airlock/internal/label"
+	"github.com/emdzej/airlock/internal/mount"
 )
 
 // POST /api/partitions/{name}/label
@@ -97,4 +101,75 @@ func (s *Server) handleSetLabel(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("relabelled", "partition", partition, "new_label", body.Label)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /api/partitions/{name}/mount
+// Asks the daemon to mount an unmounted partition. We locate the
+// partition via lsblk (safety gate: must be USB-attached with a
+// supported FS), then fire `udevadm trigger --action=add /dev/<name>`.
+// The daemon's netlink listener picks that up on the normal path.
+func (s *Server) handleMountPartition(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+
+	all, err := devices.List()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	var found devices.Partition
+	var device devices.Device
+	for _, d := range all {
+		for _, p := range d.Partitions {
+			if p.Name == name {
+				found = p
+				device = d
+				break
+			}
+		}
+		if found.Name != "" {
+			break
+		}
+	}
+	if found.Name == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "partition not found (not USB-attached?)"})
+		return
+	}
+	if !mount.SupportedFilesystems[normalizeFSName(found.FSType)] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "filesystem not supported for auto-mount: " + found.FSType,
+		})
+		return
+	}
+	if found.IsAirlock {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "partition already mounted"})
+		return
+	}
+	_ = device // reserved for future safety checks
+
+	slog.Info("mount requested", "partition", name)
+	dev := "/dev/" + name
+	out, err := exec.Command("udevadm", "trigger", "--action=add", dev).CombinedOutput()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "udevadm trigger failed: " + strings.TrimSpace(string(out)),
+		})
+		return
+	}
+	// Give the daemon a beat to process the event so the UI's next poll
+	// shows the mount without needing a manual refresh delay.
+	time.Sleep(500 * time.Millisecond)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// normalizeFSName maps blkid's FS name string to the key used in
+// mount.SupportedFilesystems (which uses "vfat", "exfat", "ntfs", etc.).
+func normalizeFSName(fs string) string {
+	switch fs {
+	case "fat", "fat32", "fat16":
+		return "vfat"
+	case "ntfs3":
+		return "ntfs"
+	default:
+		return fs
+	}
 }
