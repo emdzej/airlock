@@ -1,5 +1,7 @@
 /bin/
 /dist/
+/build.log
+/image/pi-gen/.pi-gen/
 *.img
 *.img.xz
 .DS_Store
