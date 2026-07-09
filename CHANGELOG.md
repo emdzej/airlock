@@ -75,13 +75,31 @@ faster to boot, safer to compromise, and more visible in the Devices tab.
   Mount-namespace-inducing directives are deliberately excluded (see
   Fixed below).
 - **New docs sections** in `docs/install.md`: **Optional: faster boot**
-  (with per-service explanation, measured impact, and a manual recipe)
-  and **Additional hardening** (systemd sandbox + optional USB blocklist).
-- Devices tab payload now includes `can_mount` and `can_relabel` flags
-  per partition, so the UI shows only the actions that make sense.
+  (with per-service explanation, measured impact, and a manual recipe),
+  **Additional hardening** (systemd sandbox + optional USB blocklist),
+  and **Flashing OS images to a drive**.
+- **"Why the name" section** in the README explaining the security
+  posture — Airlock as the isolation chamber between untrusted media
+  and your primary machine (`nosuid,nodev,noexec`, no autorun, BadUSB
+  neutralization on a headless box, kernel FS-parser CVEs land on the
+  Pi instead of your laptop). Explicit note that endpoint hygiene
+  (AV, sandbox) is still the user's job.
+- Devices tab payload now includes `can_mount`, `can_relabel`, and
+  `can_fsck` flags per partition, so the UI shows only the actions
+  that make sense for each filesystem.
 
 ### Fixed
 
+- **Finder rendered airlock as a monitor/computer icon** in the Network
+  sidebar despite our `_device-info._tcp` advertisement. Root cause:
+  Samba's own mDNS publisher shipped a competing record under the
+  NetBIOS name (`AIRLOCK`) with `model=MacSamba`, which Apple has no
+  icon mapping for, and Finder was picking that one. Set
+  `multicast dns register = no` in `smb.conf` to suppress Samba's
+  publisher, and switched the Avahi model to
+  `MacPro7,1@ECOLOR=226,226,224` — the same string TrueNAS uses to get
+  a proper Mac Pro tower icon in the sidebar. (After the fix, `killall
+  Finder` may be needed once to drop the cached icon.)
 - **SMB shares appeared empty when the systemd sandbox created a private
   mount namespace.** `ProtectSystem=strict` + `ReadWritePaths` bind-mounted
   `/mnt/airlock` into the service's own namespace as slave, so mounts
