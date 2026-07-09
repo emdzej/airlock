@@ -47,8 +47,7 @@ Version **0.2.0** — first tag. Runs on real hardware (Raspberry Pi 4 on
 Debian 13 / Trixie). Mounts, file management, format, volume relabel,
 opt-in USB / boot / Wi-Fi hardening all work; the flashable pi-gen image
 still needs a full build round-trip. See [`CHANGELOG.md`](CHANGELOG.md)
-for what's in the release and [`docs/milestones.md`](docs/milestones.md)
-for how we got here.
+for what's in the release.
 
 ## Design
 
@@ -93,8 +92,7 @@ GPIO wiring, uninstall, and troubleshooting.
 - `scripts/install.sh` — installer for an existing Raspberry Pi
 - `.github/workflows/` — CI (build/test) and Release (tag → binaries)
 - `CHANGELOG.md` — release notes
-- `docs/` — [install guide](docs/install.md), [milestones](docs/milestones.md),
-  [backlog](docs/backlog.md)
+- `docs/` — [install guide](docs/install.md), [backlog](docs/backlog.md)
 
 ## Build
 
