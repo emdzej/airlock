@@ -12,6 +12,7 @@
 #   AIRLOCK_BINARY_URL    override the binary tarball URL entirely
 #   AIRLOCK_LOCAL_BINARY  path to a locally-built binary (skips download)
 #   AIRLOCK_PREFIX        install prefix (default: /usr/local)
+#   AIRLOCK_HARDEN_USB    set to 1 to block HID / CDC-* USB drivers (opt-in)
 #
 # The script is idempotent — safe to re-run to upgrade or repair an install.
 
@@ -21,6 +22,7 @@ REPO="${AIRLOCK_REPO:-emdzej/airlock}"
 VERSION="${AIRLOCK_VERSION:-}"
 PREFIX="${AIRLOCK_PREFIX:-/usr/local}"
 LOCAL_BINARY="${AIRLOCK_LOCAL_BINARY:-}"
+HARDEN_USB="${AIRLOCK_HARDEN_USB:-0}"
 
 # --- output helpers ---
 if [[ -t 2 ]]; then
@@ -101,7 +103,7 @@ log "installing binary to $PREFIX/bin/airlockd"
 install -D -m 0755 "$TMP/airlockd" "$PREFIX/bin/airlockd"
 
 # --- systemd unit ---
-log "installing systemd unit"
+log "installing systemd unit (with sandbox)"
 cat > /etc/systemd/system/airlockd.service <<'UNIT'
 [Unit]
 Description=Airlock daemon
@@ -117,6 +119,21 @@ RestartSec=3
 User=root
 StandardOutput=journal
 StandardError=journal
+
+# systemd sandboxing — see docs/install.md "Additional hardening"
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/samba/smb.conf.d /mnt/airlock /var/log/samba
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
@@ -189,6 +206,28 @@ AVAHI
 
 # --- Mount base dir ---
 mkdir -p /mnt/airlock
+
+# --- Optional USB class blocklist ---
+# When AIRLOCK_HARDEN_USB=1, install the modprobe file that refuses HID
+# (keyboards/mice) and CDC-* (USB Ethernet, serial) drivers. USB mass
+# storage is unaffected. Skip if you still want to plug a keyboard in.
+if [[ "$HARDEN_USB" == "1" ]]; then
+    log "installing USB class blocklist (opt-in, AIRLOCK_HARDEN_USB=1)"
+    SRC_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+    if [[ -f "$SRC_DIR/modprobe-airlock.conf" ]]; then
+        install -D -m 0644 "$SRC_DIR/modprobe-airlock.conf" \
+            /etc/modprobe.d/modprobe-airlock.conf
+    else
+        # Curl-piped install: no local script dir — download from repo.
+        curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/modprobe-airlock.conf" \
+            -o /etc/modprobe.d/modprobe-airlock.conf
+        chmod 0644 /etc/modprobe.d/modprobe-airlock.conf
+    fi
+    systemctl restart systemd-udevd || true
+    warn "USB HID + CDC drivers now blocked. Reboot to apply fully."
+else
+    log "USB class blocklist skipped (set AIRLOCK_HARDEN_USB=1 to enable)"
+fi
 
 # --- reload + start ---
 log "reloading systemd and udev"

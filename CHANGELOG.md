@@ -78,6 +78,25 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
   preserved.
 - Version + GitHub link in the footer of every page.
 
+### Added — security & sandboxing
+
+- `airlockd.service` runs inside a systemd sandbox by default:
+  `NoNewPrivileges=true`, `ProtectSystem=strict` with an explicit
+  `ReadWritePaths` allowlist, `ProtectHome`, `PrivateTmp`,
+  `ProtectKernelTunables`/`Modules`/`ControlGroups`/`Clock`,
+  `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, and
+  `LockPersonality`. A daemon compromise via any subprocess (mkfs,
+  parted, smbcontrol …) has very little to reach for.
+- Every mount already carried `nosuid,nodev,noexec` in 0.1.0; that
+  guarantee is now called out in the docs alongside the sandbox.
+- Optional USB device-class blocklist (`scripts/modprobe-airlock.conf`)
+  refuses HID (keyboards / mice) and CDC-* (USB Ethernet / serial)
+  drivers at attach time while leaving USB mass storage alone —
+  neutralizes "BadUSB" / "USB Rubber Ducky" attacks against the
+  console. Opt-in via `AIRLOCK_HARDEN_USB=1` in the installer or by
+  copying the file to `/etc/modprobe.d/`. Documented under
+  **Additional hardening** in `docs/install.md`.
+
 ### Added — packaging & tooling
 
 - `pi-gen` custom stage (`image/pi-gen/stage-airlock/`) producing an

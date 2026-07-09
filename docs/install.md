@@ -47,6 +47,7 @@ config without touching state on mounted drives.
 | `AIRLOCK_BINARY_URL`    | Fully override the tarball URL                                      |
 | `AIRLOCK_LOCAL_BINARY`  | Path to a locally-built binary — skips download                     |
 | `AIRLOCK_PREFIX`        | Install prefix (default `/usr/local`)                               |
+| `AIRLOCK_HARDEN_USB`    | `1` to also block HID / CDC-* USB drivers (see "Additional hardening") |
 
 Example — install a pinned version:
 
@@ -215,6 +216,65 @@ action per device.
 | Windows Explorer     | `\\<host>\<share>` (may require enabling "insecure guest logons" via GPO)  |
 | Linux (Nautilus)     | Files sidebar → Other Locations → `smb://<host>.local/`                    |
 | CLI (`smbclient`)    | `smbclient -N //<host>.local/<share>`                                      |
+
+## Additional hardening (optional)
+
+Airlock is designed to be safer than plugging USB storage directly into your
+laptop — mounts always use `nosuid,nodev,noexec`, we never auto-execute
+anything from the media, and the daemon runs inside a systemd sandbox
+(`ProtectSystem=strict`, `PrivateTmp`, `RestrictNamespaces`, etc.).
+
+Two more layers are available if you want them.
+
+### 1. Block non-storage USB device classes
+
+By default the Pi will still enumerate USB keyboards, mice, and USB-Ethernet
+adapters if they're plugged in. That's useful (e.g. for a keyboard during
+debugging) but it's also the attack surface exploited by "BadUSB" / "USB
+Rubber Ducky" devices, where a stick pretends to be a keyboard and types
+commands at whatever session is on the console.
+
+To refuse those drivers at attach time — while keeping USB mass storage
+working — install the ships-with-the-repo modprobe blocklist:
+
+```sh
+# One-liner install (curl-piped install.sh):
+AIRLOCK_HARDEN_USB=1 \
+  curl -fsSL https://github.com/emdzej/airlock/releases/latest/download/install.sh | sudo -E bash
+
+# Or apply to an existing airlock install:
+curl -fsSL https://raw.githubusercontent.com/emdzej/airlock/main/scripts/modprobe-airlock.conf \
+    | sudo tee /etc/modprobe.d/modprobe-airlock.conf > /dev/null
+sudo systemctl restart systemd-udevd
+sudo reboot   # reboot cleanly re-enumerates every USB device
+```
+
+**Trade-off:** you can no longer use a USB keyboard, mouse, or USB-Ethernet
+adapter on this Pi. If you rely on any of those (SSH is unaffected — that's
+network), leave the blocklist uninstalled.
+
+To remove:
+
+```sh
+sudo rm /etc/modprobe.d/modprobe-airlock.conf
+sudo systemctl restart systemd-udevd
+```
+
+### 2. Read-only root filesystem
+
+The `pi-gen` custom image ships with `overlayroot=tmpfs` — the OS partition
+is read-only and any writes go to RAM, discarded on reboot. If you want the
+same on an existing Raspberry Pi OS install:
+
+```sh
+sudo apt-get install -y overlayroot
+echo 'overlayroot="tmpfs"' | sudo tee /etc/overlayroot.conf
+sudo update-initramfs -u
+sudo reboot
+```
+
+Persistent settings (Wi-Fi credentials, hostname) should live on the FAT
+`/boot/firmware` partition, which stays writable.
 
 ## Optional: GPIO button + LED
 

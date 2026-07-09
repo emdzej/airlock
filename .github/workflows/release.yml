@@ -69,6 +69,7 @@ jobs:
 
           cp scripts/install.sh "$B/install.sh"
           chmod +x "$B/install.sh"
+          cp scripts/modprobe-airlock.conf "$B/modprobe-airlock.conf"
 
           # Config files, sourced from the pi-gen stage so image + installer
           # stay in lock-step.
