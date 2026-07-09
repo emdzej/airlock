@@ -80,13 +80,14 @@ manage it (browse / upload / format / relabel) from any device on your LAN.
 
 ### Added — security & sandboxing
 
-- `airlockd.service` runs inside a systemd sandbox by default:
-  `NoNewPrivileges=true`, `ProtectSystem=strict` with an explicit
-  `ReadWritePaths` allowlist, `ProtectHome`, `PrivateTmp`,
-  `ProtectKernelTunables`/`Modules`/`ControlGroups`/`Clock`,
-  `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, and
-  `LockPersonality`. A daemon compromise via any subprocess (mkfs,
-  parted, smbcontrol …) has very little to reach for.
+- `airlockd.service` gets a seccomp + prctl sandbox:
+  `NoNewPrivileges`, `LockPersonality`, `RestrictSUIDSGID`,
+  `RestrictRealtime`, `RestrictNamespaces`, and
+  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`.
+  Deliberately no `ProtectSystem` / `ProtectHome` / `PrivateTmp` /
+  `ReadWritePaths` / `Protect{KernelTunables,KernelModules,ControlGroups}`
+  — each of those creates a private mount namespace which would trap
+  our mounts away from `smbd` and leave SMB shares empty.
 - Every mount already carried `nosuid,nodev,noexec` in 0.1.0; that
   guarantee is now called out in the docs alongside the sandbox.
 - Optional USB device-class blocklist (`scripts/modprobe-airlock.conf`)

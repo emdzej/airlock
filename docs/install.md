@@ -221,8 +221,11 @@ action per device.
 
 Airlock is designed to be safer than plugging USB storage directly into your
 laptop — mounts always use `nosuid,nodev,noexec`, we never auto-execute
-anything from the media, and the daemon runs inside a systemd sandbox
-(`ProtectSystem=strict`, `PrivateTmp`, `RestrictNamespaces`, etc.).
+anything from the media, and the daemon runs with a seccomp+prctl sandbox
+(`NoNewPrivileges`, `LockPersonality`, `RestrictSUIDSGID`,
+`RestrictAddressFamilies`, `RestrictNamespaces`, `RestrictRealtime`).
+Mount-namespace-inducing directives are deliberately excluded so mounts
+propagate to `smbd`.
 
 Two more layers are available if you want them.
 

@@ -13,25 +13,21 @@ User=root
 StandardOutput=journal
 StandardError=journal
 
-# --- systemd sandboxing ---
-# The daemon runs as root because it needs CAP_SYS_ADMIN to mount/unmount
-# block devices and spawn mkfs / parted / smbcontrol. These directives
-# constrain what "root" can reach: read-only view of /usr and /etc except
-# for the specific paths we regenerate, no /home, private /tmp, no kernel
-# tunables / modules / cgroups, no namespace or personality tricks.
+# --- systemd sandboxing (seccomp + prctl only) ---
+# We must NOT put airlockd in a private mount namespace: mounts made by
+# the daemon there wouldn't propagate to smbd (which runs in the host
+# namespace) and SMB shares would appear empty. That rules out
+# ProtectSystem=, ProtectHome=, PrivateTmp=, ReadWritePaths=,
+# ProtectKernelTunables=, ProtectKernelModules=, ProtectControlGroups=,
+# and MountFlags= (all of which either create a mount ns or rely on one).
+#
+# What remains — cheap defense in depth via seccomp and prctl:
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/etc/samba/smb.conf.d /mnt/airlock /var/log/samba
-ProtectHome=true
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-ProtectClock=true
-RestrictNamespaces=true
-RestrictRealtime=true
-RestrictSUIDSGID=true
 LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

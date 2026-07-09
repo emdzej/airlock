@@ -120,20 +120,13 @@ User=root
 StandardOutput=journal
 StandardError=journal
 
-# systemd sandboxing — see docs/install.md "Additional hardening"
+# systemd sandbox (seccomp + prctl only — no mount ns).
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/etc/samba/smb.conf.d /mnt/airlock /var/log/samba
-ProtectHome=true
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-ProtectClock=true
-RestrictNamespaces=true
-RestrictRealtime=true
-RestrictSUIDSGID=true
 LockPersonality=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
