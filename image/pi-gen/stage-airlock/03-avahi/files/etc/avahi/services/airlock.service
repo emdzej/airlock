@@ -30,4 +30,17 @@
     <port>0</port>
     <txt-record>model=MacPro7,1@ECOLOR=226,226,224</txt-record>
   </service>
+  <!--
+    Dedicated `_airlock._tcp` advertisement used by the airlock
+    companion apps (macOS / future) to discover instances via mDNS.
+    Port matches the HTTP API. TXT records carry the API version and
+    a stable-ish host identifier so clients can filter mismatched
+    daemons and remember per-host preferences.
+  -->
+  <service>
+    <type>_airlock._tcp</type>
+    <port>80</port>
+    <txt-record>api=1</txt-record>
+    <txt-record>path=/</txt-record>
+  </service>
 </service-group>

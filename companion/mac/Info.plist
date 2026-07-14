@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Airlock</string>
+    <key>CFBundleDisplayName</key>
+    <string>Airlock Companion</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.emdzej.airlock.companion</string>
+    <key>CFBundleExecutable</key>
+    <string>AirlockCompanion</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <!-- Keep the app out of the Dock; menubar-only. -->
+    <key>LSUIElement</key>
+    <true/>
+    <!-- Allow Bonjour browsing for our service on macOS 14+ -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_airlock._tcp</string>
+    </array>
+    <!-- Shown once the first time the app tries to talk to a LAN host. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Airlock Companion discovers airlock devices on your local network via Bonjour and queries them for connected drives.</string>
+</dict>
+</plist>
