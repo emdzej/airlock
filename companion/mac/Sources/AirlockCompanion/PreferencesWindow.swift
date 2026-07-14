@@ -27,6 +27,7 @@ final class PreferencesWindowController {
 
 private struct PreferencesView: View {
     @AppStorage("autoMountAll") private var autoMountAll = false
+    @AppStorage("openOnMount") private var openOnMount = false
     @State private var loginItemEnabled: Bool = LoginItem.isEnabled
     @State private var loginItemError: String?
 
@@ -35,7 +36,14 @@ private struct PreferencesView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Auto-mount all discovered drives", isOn: $autoMountAll)
                     .toggleStyle(.checkbox)
-                Text("Every drive that appears on any airlock on your local network is automatically mounted on this Mac. Mount points: /Volumes/<share>-on-<host>.")
+                Text("Every drive that appears on any airlock on your local network is automatically mounted on this Mac.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Toggle("Open in Finder after mounting", isOn: $openOnMount)
+                    .toggleStyle(.checkbox)
+                    .padding(.top, 4)
+                Text("Reveal the drive in Finder as soon as it mounts (either from the menu's Mount action or the auto-mount above).")
                     .font(.callout)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

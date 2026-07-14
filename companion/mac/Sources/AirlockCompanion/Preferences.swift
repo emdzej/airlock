@@ -13,6 +13,15 @@ final class Preferences {
         set { defaults.set(newValue, forKey: Key.autoMountAll) }
     }
 
+    /// When true, mount actions (manual click "Mount on this Mac" and
+    /// automatic auto-mount) also open the drive in Finder as soon as
+    /// the mount lands. Off by default; the explicit "Mount and Open"
+    /// menu item ignores this and always opens.
+    var openOnMount: Bool {
+        get { defaults.bool(forKey: Key.openOnMount) }
+        set { defaults.set(newValue, forKey: Key.openOnMount) }
+    }
+
     /// Notification consent flag we set once the user has been asked
     /// (regardless of allow/deny). Prevents re-prompting on every launch.
     var notificationsRequested: Bool {
@@ -22,6 +31,7 @@ final class Preferences {
 
     private enum Key {
         static let autoMountAll = "autoMountAll"
+        static let openOnMount = "openOnMount"
         static let notificationsRequested = "notificationsRequested"
     }
 }

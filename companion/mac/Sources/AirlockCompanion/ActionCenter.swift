@@ -22,14 +22,33 @@ final class ActionCenter: NSObject {
 
     @objc func mountDrive(_ sender: NSMenuItem) {
         guard let ctx = sender.representedObject as? DriveContext else { return }
-        mounts.mount(host: ctx.host, drive: ctx.drive) { err in
+        performMount(ctx: ctx, openAfter: Preferences.shared.openOnMount)
+    }
+
+    /// Explicit "Mount and Open" menu action: always opens in Finder,
+    /// regardless of the `openOnMount` preference.
+    @objc func mountAndOpenDrive(_ sender: NSMenuItem) {
+        guard let ctx = sender.representedObject as? DriveContext else { return }
+        performMount(ctx: ctx, openAfter: true)
+    }
+
+    private func performMount(ctx: DriveContext, openAfter: Bool) {
+        mounts.mount(host: ctx.host, drive: ctx.drive) { [weak self] err in
             if let err {
                 Notifier.shared.error("Couldn't mount \(ctx.drive.displayName)",
                                       body: err.localizedDescription)
             } else {
                 Notifier.shared.info("Mounted \(ctx.drive.displayName)")
+                if openAfter { self?.revealMountPath(host: ctx.host, drive: ctx.drive) }
             }
         }
+    }
+
+    private func revealMountPath(host: HostState, drive: Drive) {
+        // mount() completion fires after the mount table shows the
+        // new entry, so mountPath should be populated. Guard anyway.
+        guard let mp = mounts.mountPath(host: host, drive: drive) else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: mp))
     }
 
     @objc func unmountDrive(_ sender: NSMenuItem) {
@@ -44,8 +63,7 @@ final class ActionCenter: NSObject {
 
     @objc func revealDrive(_ sender: NSMenuItem) {
         guard let ctx = sender.representedObject as? DriveContext else { return }
-        let mp = mounts.mountPointFor(host: ctx.host, drive: ctx.drive)
-        NSWorkspace.shared.open(URL(fileURLWithPath: mp))
+        revealMountPath(host: ctx.host, drive: ctx.drive)
     }
 
     @objc func ejectDrive(_ sender: NSMenuItem) {
@@ -114,12 +132,15 @@ final class ActionCenter: NSObject {
     /// mounted locally. Called after each discovery refresh.
     func maybeAutoMount() {
         guard Preferences.shared.autoMountAll else { return }
+        let openAfter = Preferences.shared.openOnMount
         for host in discovery.hosts {
             for drive in host.drives where !mounts.isMounted(host: host, drive: drive) {
-                mounts.mount(host: host, drive: drive) { err in
+                mounts.mount(host: host, drive: drive) { [weak self] err in
                     if let err {
                         Notifier.shared.error("Auto-mount failed: \(drive.displayName)",
                                               body: err.localizedDescription)
+                    } else if openAfter {
+                        self?.revealMountPath(host: host, drive: drive)
                     }
                 }
             }

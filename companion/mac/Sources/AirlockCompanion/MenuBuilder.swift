@@ -159,6 +159,13 @@ enum MenuBuilder {
             mount.target = actions
             mount.representedObject = ctx
             sub.addItem(mount)
+
+            let mountOpen = NSMenuItem(title: "Mount and Open in Finder",
+                                       action: #selector(ActionCenter.mountAndOpenDrive(_:)),
+                                       keyEquivalent: "")
+            mountOpen.target = actions
+            mountOpen.representedObject = ctx
+            sub.addItem(mountOpen)
         }
 
         let copyItem = NSMenuItem(title: "Copy SMB URL",
