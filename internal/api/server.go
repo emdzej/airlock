@@ -41,6 +41,7 @@ type Server struct {
 	tmpl    *template.Template
 	onBusy  BusyFunc
 	version string
+	events  *broadcaster
 }
 
 // New parses templates and returns a Server. onBusy may be nil.
@@ -63,6 +64,7 @@ func New(mgr *mount.Manager, onBusy BusyFunc, version string) (*Server, error) {
 		tmpl:    tmpl,
 		onBusy:  onBusy,
 		version: version,
+		events:  newBroadcaster(),
 	}, nil
 }
 
@@ -114,6 +116,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/partitions/{name}/fsck", s.handleFsck)
 	// Devices HTML page
 	mux.HandleFunc("GET /devices", s.handleDevicesPage)
+	// Event stream (SSE)
+	mux.HandleFunc("GET /api/events", s.handleEvents)
 	return mux
 }
 

@@ -2,8 +2,8 @@ import Foundation
 
 /// One discovered airlock host. Immutable identity (`serviceName`,
 /// `hostname`, `port`) with mutable observed state (drives list,
-/// last error). Not thread-safe by design — mutations go through the
-/// completion handler which we always dispatch to main.
+/// last error, last-seen timestamp). Not thread-safe by design —
+/// callers mutate on the main queue.
 final class HostState {
     let serviceName: String
     let hostname: String
@@ -12,6 +12,14 @@ final class HostState {
     private(set) var drives: [Drive] = []
     private(set) var lastError: String?
     private(set) var isReachable: Bool = false
+    private(set) var lastSeenOnline: Date?
+
+    /// Fires whenever any observed property changes (drives / error /
+    /// reachability). Assign in the owner (Discovery) so it can rebuild
+    /// the menu.
+    var onChange: (() -> Void)?
+
+    private var stream: EventStream?
 
     init(serviceName: String, hostname: String, port: Int) {
         self.serviceName = serviceName
@@ -23,37 +31,53 @@ final class HostState {
         URL(string: "http://\(hostname):\(port)")!
     }
 
-    /// Fetches `/api/drives`. Updates `drives`, `lastError`, and
-    /// `isReachable` on the main queue before invoking `completion`.
-    func refresh(completion: @escaping () -> Void) {
-        let url = baseURL.appendingPathComponent("api/drives")
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 3.0
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, err in
-            guard let self else { return }
-            DispatchQueue.main.async {
-                defer { completion() }
-                if let err {
-                    self.isReachable = false
-                    self.lastError = err.localizedDescription
-                    return
+    /// Open the live SSE stream. The daemon sends the current drive
+    /// list immediately on connect, so this replaces the previous
+    /// polling refresh. Called by Discovery on resolution.
+    func startEventStream() {
+        stream?.stop()
+        let s = EventStream(
+            url: baseURL.appendingPathComponent("api/events"),
+            onDrives: { [weak self] drives in
+                guard let self else { return }
+                self.drives = drives
+                self.isReachable = true
+                self.lastSeenOnline = Date()
+                self.lastError = nil
+                self.onChange?()
+            },
+            onConnected: { [weak self] in
+                guard let self else { return }
+                self.isReachable = true
+                self.lastError = nil
+                self.lastSeenOnline = Date()
+                self.onChange?()
+            },
+            onDisconnected: { [weak self] error in
+                guard let self else { return }
+                self.isReachable = false
+                if let e = error {
+                    self.lastError = e.localizedDescription
                 }
-                guard let data else {
-                    self.isReachable = false
-                    self.lastError = "empty response"
-                    return
-                }
-                do {
-                    let list = try JSONDecoder().decode([Drive].self, from: data)
-                    self.drives = list
-                    self.isReachable = true
-                    self.lastError = nil
-                } catch {
-                    self.isReachable = false
-                    self.lastError = "decode: \(error.localizedDescription)"
-                }
+                self.onChange?()
             }
-        }.resume()
+        )
+        stream = s
+        s.start()
+    }
+
+    func stopEventStream() {
+        stream?.stop()
+        stream = nil
+    }
+
+    /// Restore persisted state from disk (last-seen timestamp, cached
+    /// drive list). Used by HostStore when replaying known hosts on
+    /// startup before their SSE stream reconnects.
+    func restore(lastSeen: Date?, cachedDrives: [Drive]) {
+        self.lastSeenOnline = lastSeen
+        self.drives = cachedDrives
+        self.isReachable = false
     }
 }
 

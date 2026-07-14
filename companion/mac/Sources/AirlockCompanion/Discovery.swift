@@ -16,12 +16,6 @@ final class Discovery: NSObject {
         browser.delegate = self
         browser.searchForServices(ofType: "_airlock._tcp.", inDomain: "local.")
     }
-
-    func refreshAllDrives() {
-        for host in hosts {
-            host.refresh { [weak self] in self?.onChange?() }
-        }
-    }
 }
 
 extension Discovery: NetServiceBrowserDelegate {
@@ -32,7 +26,12 @@ extension Discovery: NetServiceBrowserDelegate {
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
-        hosts.removeAll { $0.serviceName == service.name }
+        // Mark the host as offline; don't drop from the list — it may
+        // come back (Pi rebooted, briefly off Wi-Fi). Persistent store
+        // (HostStore) prunes truly-gone hosts on its own schedule.
+        if let host = hosts.first(where: { $0.serviceName == service.name }) {
+            host.stopEventStream()
+        }
         onChange?()
     }
 }
@@ -45,12 +44,18 @@ extension Discovery: NetServiceDelegate {
         // parse cleanly.
         let hostname = host.hasSuffix(".") ? String(host.dropLast()) : host
         let port = service.port > 0 ? service.port : 80
-        // Guard against duplicates (multi-interface Macs can resolve
-        // the same service twice; we key by service instance name).
-        if hosts.contains(where: { $0.serviceName == service.name }) { return }
+        // Reactivate a remembered host (persisted offline entry) if the
+        // service name matches — that way its cached lastSeen /
+        // rememberedHostname carry over.
+        if let existing = hosts.first(where: { $0.serviceName == service.name }) {
+            existing.startEventStream()
+            onChange?()
+            return
+        }
         let state = HostState(serviceName: service.name, hostname: hostname, port: port)
+        state.onChange = { [weak self] in self?.onChange?() }
         hosts.append(state)
-        state.refresh { [weak self] in self?.onChange?() }
+        state.startEventStream()
         onChange?()
     }
 

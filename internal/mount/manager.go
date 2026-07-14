@@ -66,12 +66,23 @@ type Listener func(Snapshot)
 // Manager owns the set of currently-mounted airlock drives and drives the
 // mount/unmount lifecycle in response to udev events.
 type Manager struct {
-	baseDir  string
-	listener Listener
+	baseDir   string
+	listener  Listener
+	listeners []Listener
 
 	mu         sync.Mutex
 	drives     map[string]*Drive // key: kernel name
 	quarantine map[string]bool   // parent kernel names to ignore events for
+}
+
+// AddListener registers an additional callback fired after each mount
+// state change. Complements the primary Listener passed to NewManager
+// so consumers (e.g. the SSE broadcaster) can subscribe without
+// wrapping every other listener.
+func (m *Manager) AddListener(l Listener) {
+	m.mu.Lock()
+	m.listeners = append(m.listeners, l)
+	m.mu.Unlock()
 }
 
 // NewManager returns a Manager writing mount points under baseDir. baseDir is
@@ -384,6 +395,13 @@ func (m *Manager) snapshotLocked() Snapshot {
 func (m *Manager) notify(snap Snapshot) {
 	if m.listener != nil {
 		m.listener(snap)
+	}
+	// Copy the slice under lock so callback code doesn't hold the mutex.
+	m.mu.Lock()
+	extra := append([]Listener(nil), m.listeners...)
+	m.mu.Unlock()
+	for _, l := range extra {
+		l(snap)
 	}
 }
 

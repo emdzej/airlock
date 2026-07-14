@@ -68,6 +68,11 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Attach the API server as an additional mount listener so its
+	// SSE event stream sees the same snapshots the samba writer does.
+	mgr.AddListener(func(snap mount.Snapshot) {
+		apiSrv.PublishDrives(snap)
+	})
 
 	// GPIO is best-effort. If /dev/gpiochip0 isn't reachable (dev machine, no
 	// wiring, kernel not surfacing the chip) we log and continue — the

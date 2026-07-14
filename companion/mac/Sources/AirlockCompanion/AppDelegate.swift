@@ -7,7 +7,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let discovery = Discovery()
     private let mounts = MountManager()
     private lazy var actions = ActionCenter(discovery: discovery, mounts: mounts)
-    private var refreshTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -31,12 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mounts.onChange = onChange
 
         discovery.start()
-
-        // Poll each host's /api/drives every 3 s so remote drive
-        // changes reach the menu without the user clicking.
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            self?.discovery.refreshAllDrives()
-        }
 
         Notifier.shared.requestAuthorizationIfNeeded()
     }
