@@ -6,6 +6,31 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [Unreleased]
+
+### Added — Mac companion app (`companion/mac/`)
+
+- New menubar-only `AirlockCompanion.app` (Swift Package + `LSUIElement`
+  bundle) that discovers airlock instances via a new `_airlock._tcp`
+  mDNS advertisement, lists their drives, and offers per-drive Mount /
+  Unmount / Reveal / Eject / Copy SMB URL and per-host Eject-all /
+  Open web UI. Preferences window with "Auto-mount all discovered
+  drives" and "Start at login" toggles.
+- Live push updates via new daemon SSE endpoint `GET /api/events`
+  (Server-Sent Events). Replaces the earlier 3 s polling. Heartbeat
+  every 30 s, exponential-backoff reconnect on client side.
+- Persistent host store: airlocks the app has seen before are shown
+  in the menu even when currently offline, with a `last seen 2h ago`
+  status line. Prunes entries not seen in 30 days.
+- Colored status dot per host in the menu (green live · red error ·
+  grey offline / connecting).
+- XcodeGen `project.yml` for developers who want the Xcode UI;
+  `.xcodeproj` stays out of git.
+- Release workflow gets a `companion-mac` job that runs on
+  `macos-14`, builds the app and DMG (unsigned — no Developer Account
+  yet), and attaches `AirlockCompanion-<tag>.dmg` + sha256 to the
+  same GitHub release.
+
 ## [0.2.0] — 2026-07-09
 
 Hardware verification + hardening + boot-time tuning pass. All 0.1.0

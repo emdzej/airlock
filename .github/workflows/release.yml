@@ -181,3 +181,58 @@ jobs:
           files: |
             dist/airlock-${{ steps.tag.outputs.tag }}-linux-arm64.img.xz
             dist/airlock-${{ steps.tag.outputs.tag }}-linux-arm64.img.xz.sha256
+
+  companion-mac:
+    name: Build Mac companion DMG
+    runs-on: macos-14
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Set version in Info.plist to release tag
+        working-directory: companion/mac
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          plutil -replace CFBundleShortVersionString -string "${VERSION}" Info.plist
+          plutil -replace CFBundleVersion            -string "${VERSION}" Info.plist
+
+      - name: Build
+        working-directory: companion/mac
+        run: ./build.sh
+
+      - name: Package DMG
+        working-directory: companion/mac
+        run: ./package.sh
+
+      - name: Rename DMG to tag
+        working-directory: companion/mac
+        env:
+          VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          SRC=$(ls build/AirlockCompanion-*.dmg | head -1)
+          DST="build/AirlockCompanion-${VERSION}.dmg"
+          if [ "$SRC" != "$DST" ]; then mv "$SRC" "$DST"; fi
+          shasum -a 256 "$DST" > "${DST}.sha256"
+          ls -lh build/*.dmg build/*.sha256
+
+      - name: Attach DMG to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          fail_on_unmatched_files: true
+          files: |
+            companion/mac/build/AirlockCompanion-${{ steps.tag.outputs.tag }}.dmg
+            companion/mac/build/AirlockCompanion-${{ steps.tag.outputs.tag }}.dmg.sha256

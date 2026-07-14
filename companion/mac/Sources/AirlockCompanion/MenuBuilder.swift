@@ -3,6 +3,61 @@ import AppKit
 /// Renders the current discovery state into an NSMenu, wiring
 /// selectors to methods on the shared ActionCenter.
 enum MenuBuilder {
+
+    // MARK: - Header composition
+
+    private static func hostHeaderTitle(for host: HostState) -> NSAttributedString {
+        // ● green  = live (isReachable && no error)
+        // ● red    = last known state was an error
+        // ● gray   = offline / not yet reachable
+        let (dotColor, statusText): (NSColor, String)
+        if let err = host.lastError, !host.isReachable {
+            dotColor = .systemRed
+            statusText = err
+        } else if !host.isReachable {
+            if let since = host.lastSeenOnline, since > .distantPast {
+                dotColor = .secondaryLabelColor
+                statusText = "offline · last seen \(relative(since))"
+            } else {
+                dotColor = .secondaryLabelColor
+                statusText = "connecting…"
+            }
+        } else {
+            dotColor = .systemGreen
+            let n = host.drives.count
+            statusText = "\(n) drive\(n == 1 ? "" : "s")"
+        }
+        let font = NSFont.menuBarFont(ofSize: 0)
+        let base: [NSAttributedString.Key: Any] = [.font: font]
+
+        let out = NSMutableAttributedString(string: "● ",
+                                            attributes: base.merging(
+                                                [.foregroundColor: dotColor],
+                                                uniquingKeysWith: { $1 }
+                                            ))
+        out.append(NSAttributedString(
+            string: host.serviceName,
+            attributes: base
+        ))
+        out.append(NSAttributedString(
+            string: "  " + statusText,
+            attributes: base.merging(
+                [.foregroundColor: NSColor.secondaryLabelColor],
+                uniquingKeysWith: { $1 }
+            )
+        ))
+        return out
+    }
+
+    /// Human relative string ("2 min ago", "3 h ago", "yesterday", …)
+    /// for a past date. Uses a RelativeDateTimeFormatter so it matches
+    /// the rest of macOS localization behavior for free.
+    private static func relative(_ date: Date) -> String {
+        let fmt = RelativeDateTimeFormatter()
+        fmt.unitsStyle = .short
+        return fmt.localizedString(for: date, relativeTo: Date())
+    }
+
     static func build(into menu: NSMenu, hosts: [HostState],
                       mounts: MountManager, actions: ActionCenter) {
         if hosts.isEmpty {
@@ -30,17 +85,9 @@ enum MenuBuilder {
 
     private static func appendHost(_ host: HostState, mounts: MountManager,
                                    actions: ActionCenter, to menu: NSMenu) {
-        // Header line: host name + status
-        let count = host.drives.count
-        let title: String
-        if let err = host.lastError {
-            title = "\(host.serviceName) — \(err)"
-        } else if !host.isReachable {
-            title = "\(host.serviceName) — connecting…"
-        } else {
-            title = "\(host.serviceName) — \(count) drive\(count == 1 ? "" : "s")"
-        }
-        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        // Header line: colored status dot + host name + short status.
+        let header = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        header.attributedTitle = hostHeaderTitle(for: host)
         header.isEnabled = false
         menu.addItem(header)
 

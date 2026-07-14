@@ -6,8 +6,8 @@ import Foundation
 /// callers mutate on the main queue.
 final class HostState {
     let serviceName: String
-    let hostname: String
-    let port: Int
+    private(set) var hostname: String
+    private(set) var port: Int
 
     private(set) var drives: [Drive] = []
     private(set) var lastError: String?
@@ -78,6 +78,13 @@ final class HostState {
         self.lastSeenOnline = lastSeen
         self.drives = cachedDrives
         self.isReachable = false
+    }
+
+    /// Called when Bonjour re-resolves this host: hostname or port may
+    /// have changed (Pi got a new DHCP lease, etc.). Idempotent.
+    func updateEndpoint(hostname: String, port: Int) {
+        self.hostname = hostname
+        self.port = port
     }
 }
 

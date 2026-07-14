@@ -1,20 +1,48 @@
 import Foundation
 
 /// Browses the local network for `_airlock._tcp` advertisements and
-/// keeps a list of resolved hosts. Each resolved host has its own
-/// AirlockClient that polls `/api/drives`.
+/// keeps a list of hosts (currently-live + remembered-offline).
+/// Each host has its own SSE-driven event stream via HostState.
 final class Discovery: NSObject {
     private let browser = NetServiceBrowser()
     private var pending: [NetService] = []
     private(set) var hosts: [HostState] = []
 
     /// Called whenever the host list or any host's drive list changes.
-    /// Fires on an arbitrary thread — dispatch to main before touching UI.
+    /// Fires on the main queue — safe to touch UI directly.
     var onChange: (() -> Void)?
 
+    private let store = HostStore.shared
+
     func start() {
+        // Restore previously-seen hosts as offline placeholders — the
+        // Bonjour resolve callback flips them back to live if the
+        // service reappears.
+        store.prune()
+        for p in store.load() {
+            let state = HostState(serviceName: p.serviceName, hostname: p.hostname, port: p.port)
+            state.restore(lastSeen: p.lastSeen, cachedDrives: p.cachedDrives)
+            state.onChange = { [weak self] in self?.persist(); self?.onChange?() }
+            hosts.append(state)
+        }
+        persist()
+        onChange?()
+
         browser.delegate = self
         browser.searchForServices(ofType: "_airlock._tcp.", inDomain: "local.")
+    }
+
+    private func persist() {
+        let items = hosts.map { host in
+            HostStore.Persisted(
+                serviceName: host.serviceName,
+                hostname: host.hostname,
+                port: host.port,
+                lastSeen: host.lastSeenOnline ?? .distantPast,
+                cachedDrives: host.drives
+            )
+        }
+        store.save(items)
     }
 }
 
@@ -40,22 +68,22 @@ extension Discovery: NetServiceDelegate {
     func netServiceDidResolveAddress(_ service: NetService) {
         pending.removeAll { $0 === service }
         guard let host = service.hostName else { return }
-        // Bonjour hostnames come with a trailing dot; strip it so URLs
-        // parse cleanly.
         let hostname = host.hasSuffix(".") ? String(host.dropLast()) : host
         let port = service.port > 0 ? service.port : 80
-        // Reactivate a remembered host (persisted offline entry) if the
-        // service name matches — that way its cached lastSeen /
-        // rememberedHostname carry over.
         if let existing = hosts.first(where: { $0.serviceName == service.name }) {
+            // Persisted offline entry — refresh its hostname/port in
+            // case the network moved the box, then reconnect.
+            existing.updateEndpoint(hostname: hostname, port: port)
             existing.startEventStream()
+            persist()
             onChange?()
             return
         }
         let state = HostState(serviceName: service.name, hostname: hostname, port: port)
-        state.onChange = { [weak self] in self?.onChange?() }
+        state.onChange = { [weak self] in self?.persist(); self?.onChange?() }
         hosts.append(state)
         state.startEventStream()
+        persist()
         onChange?()
     }
 

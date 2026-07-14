@@ -18,11 +18,25 @@ iteration.
 
 ## Build & run
 
+Two entry points:
+
 ```sh
 cd companion/mac
-./build.sh
-open build/AirlockCompanion.app
+./build.sh                   # SwiftPM → .app bundle → open build/AirlockCompanion.app
+./package.sh                 # additionally wraps the .app into a DMG
 ```
+
+For developers who want Xcode (debugger, previews, etc.):
+
+```sh
+brew install xcodegen
+xcodegen                     # generates AirlockCompanion.xcodeproj (gitignored)
+open AirlockCompanion.xcodeproj
+```
+
+The Xcode project is regenerated on demand; committing it isn't needed
+and just produces messy `.pbxproj` diffs. The SwiftPM path is what CI
+uses.
 
 The status-bar icon (an SF Symbol of an external drive with a Wi-Fi
 badge) appears in the top-right menu bar. Click it to see discovered
