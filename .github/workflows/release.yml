@@ -143,10 +143,29 @@ jobs:
                       /usr/local/lib/android /usr/local/share/boost || true
           df -h /
 
-      # Register QEMU user-mode emulation via binfmt_misc so pi-gen's
-      # chroot can execute ARM binaries on this amd64 runner. Without
-      # this, pi-gen exits with "qemu-arm not found".
-      - name: Set up QEMU (arm + arm64)
+      # pi-gen's build-docker.sh runs `which qemu-arm` on the HOST (not
+      # inside the container) before starting the build. On the amd64
+      # runner that means we need two things:
+      #
+      #   1. The `qemu-arm` binary itself on the host filesystem — from
+      #      the `qemu-user-binfmt` apt package. `docker/setup-qemu-action`
+      #      alone doesn't put it there; it only registers binfmt_misc
+      #      handlers via a privileged Docker container.
+      #
+      #   2. binfmt_misc registered for the ELF/ARM magic bytes so the
+      #      kernel actually hands ARM binaries to qemu. The apt install
+      #      registers these via `binfmt-support`, but we still keep the
+      #      setup-qemu-action step as a belt-and-braces guarantee across
+      #      any base-image drift on ubuntu-latest.
+      - name: Install qemu-user-binfmt on the runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-user-binfmt qemu-user-static binfmt-support
+          which qemu-arm
+          qemu-arm --version | head -1
+
+      - name: Register QEMU binfmt handlers (belt & braces)
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm,arm64
