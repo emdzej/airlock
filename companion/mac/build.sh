@@ -27,6 +27,19 @@ install -m 0644 Info.plist                       "$APP/Contents/Info.plist"
 # PkgInfo tells the Finder this is an app.
 printf '%s' 'APPL????' > "$APP/Contents/PkgInfo"
 
+# Ad-hoc code signature (`-s -`). Without ANY signature, macOS Sequoia
+# rejects downloaded copies with "damaged and can't be opened" and no
+# longer offers a right-click Open bypass. An ad-hoc signature isn't
+# trusted by Gatekeeper (still triggers the first-launch prompt), but
+# it satisfies the codesign integrity check so the prompt is passable
+# via right-click Open OR by stripping the quarantine xattr.
+#
+# When we eventually get an Apple Developer ID, swap `-` for the
+# team identity and add `--options runtime` for notarization.
+echo ">>> codesign (ad-hoc)"
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
+
 echo
 echo "Built: $(pwd)/$APP"
 echo "Run:   open '$(pwd)/$APP'"

@@ -6,6 +6,30 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [Unreleased]
+
+### Added
+
+- **Product site at [airlock.emdzej.pl](https://airlock.emdzej.pl)**
+  built with VitePress. Content lives in `docs/`; the existing user
+  guide and install guide are the same source. A new `docs/index.md`
+  hero page, a product overview, and a dedicated macOS companion
+  guide are added. `.github/workflows/site.yml` builds and publishes
+  to GitHub Pages on every push to `main` that touches `docs/**`.
+
+### Fixed
+
+- **macOS Sequoia (15) rejecting the companion DMG as "damaged and
+  can't be opened."** `companion/mac/build.sh` now runs an ad-hoc
+  `codesign -s -` on the built .app bundle. Without any signature
+  Sequoia refuses to open a quarantined app *and* no longer offers
+  the classic right-click Open bypass. Ad-hoc signing passes the
+  integrity check; a one-off
+  `xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app`
+  after copying still clears the download quarantine (documented in
+  the new companion page). Proper signing / notarization is queued
+  behind getting an Apple Developer Account.
+
 ## [0.3.0] — 2026-07-14
 
 Adds a macOS menubar companion app plus the daemon-side plumbing to

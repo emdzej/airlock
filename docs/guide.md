@@ -1,8 +1,8 @@
 # User guide
 
 This is the day-to-day reference for using Airlock. For first-time
-installation see [`install.md`](install.md); for release notes see
-[`../CHANGELOG.md`](../CHANGELOG.md).
+installation see [Installation](/install); for release notes see the
+[Changelog](https://github.com/emdzej/airlock/blob/main/CHANGELOG.md).
 
 ## Overview
 
@@ -359,8 +359,7 @@ Endpoint hygiene (AV, Gatekeeper on macOS, SmartScreen on Windows,
 whatever's on your machine) still matters.
 
 For the two optional tightening layers — USB device-class blocklist
-and read-only root — see [`install.md`](install.md) under
-**Additional hardening**.
+and read-only root — see the [installation guide](/install#additional-hardening).
 
 ## Troubleshooting
 
@@ -410,5 +409,5 @@ journalctl -u smbd -f                # Samba
 journalctl -u avahi-daemon -f        # mDNS / discovery
 ```
 
-For faster boot / less-noisy log volume, see [`install.md`](install.md)
-under **Optional: faster boot**.
+For faster boot / less-noisy log volume, see the
+[installation guide](/install#optional-faster-boot).

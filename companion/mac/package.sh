@@ -5,9 +5,11 @@
 # Requires: `build.sh` to have run first (so build/AirlockCompanion.app
 # exists). Output: build/AirlockCompanion-<version>.dmg
 #
-# The DMG is unsigned — first-launch on other Macs will need
-# "right-click → Open" to bypass Gatekeeper. Signing / notarization
-# is a follow-up (needs an Apple Developer Account).
+# The DMG contains an ad-hoc-signed but un-notarized .app. First
+# launch on another Mac requires stripping the download's quarantine
+# attribute — see the printed instructions at the bottom. Proper
+# signing / notarization is a follow-up (needs an Apple Developer
+# Account).
 
 set -euo pipefail
 
@@ -47,5 +49,8 @@ echo
 echo "DMG ready: $(pwd)/$DMG_OUT"
 echo "Size: $(du -h "$DMG_OUT" | cut -f1)"
 echo
-echo "First-run on another Mac: right-click → Open (Gatekeeper)."
-echo "Once run once, macOS remembers; subsequent launches work normally."
+echo "First-run on another Mac:"
+echo "  1. Drag AirlockCompanion.app to /Applications."
+echo "  2. If macOS says the app is 'damaged', run:"
+echo "       xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app"
+echo "  3. Launch it. Subsequent runs work with no prompts."
