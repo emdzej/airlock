@@ -6,7 +6,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
-## [Unreleased]
+## [0.3.1] — 2026-07-14
+
+Patch release: shipping the companion with a proper app icon so it
+stops looking like a generic PkgInfo blank in Finder / Launchpad /
+About dialogs.
 
 ### Added
 
@@ -20,6 +24,14 @@ changes are allowed between minor versions.
   Finder, Launchpad, and (if you unhide the Dock) the Dock. The
   menu-bar icon stays as the `externaldrive.badge.wifi` SF Symbol —
   optimized for 22 pt template rendering.
+
+### Version surfaces
+
+- Daemon `main.version` bumped to `0.3.1`.
+- Companion `CFBundleShortVersionString` / `MARKETING_VERSION` bumped
+  to `0.3.1`; Preferences window auto-picks it up from Info.plist.
+- No API or on-wire change — the daemon bump is only so
+  `Version 0.3.1` shows correctly in the web UI footer.
 
 ## [0.3.0] — 2026-07-14
 

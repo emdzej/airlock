@@ -43,7 +43,7 @@ tightening levels.
 
 ## Status
 
-Version **0.3.0** — daemon plus a macOS menubar companion app.
+Version **0.3.1** — daemon plus a macOS menubar companion app.
 Runs on real hardware (Raspberry Pi 4 on Debian 13 / Trixie).
 Mounts, file management, format, flash, dump, fsck, volume relabel,
 opt-in USB / boot / Wi-Fi hardening, and now a live-updating menu-bar
