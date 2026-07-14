@@ -1,20 +1,31 @@
 import Foundation
 
 /// Consumes an airlock daemon's `/api/events` server-sent event
-/// stream. Frame format is per SSE spec — `data: <json>\n\n` — with
-/// occasional `: heartbeat\n\n` comment lines to keep the connection
-/// alive through NATs. Reconnects with exponential backoff on any
-/// disconnect.
+/// stream. Uses URLSessionDataDelegate rather than
+/// `URLSession.bytes(for:).lines` because the latter buffers small
+/// text/event-stream responses on macOS 13/14 (~8 KB coalesce window)
+/// and delays delivery of tiny frames until either the buffer fills
+/// or the daemon sends a heartbeat — user-visible as "app connected
+/// but never sees any drives."
 ///
-/// The stream delivers `{"type":"drives", "drives":[...]}` payloads.
-/// Other types may appear in the future; unknown types are ignored
-/// so an older client keeps working against a newer daemon.
-final class EventStream {
+/// Delegate callbacks fire as soon as bytes arrive over the wire.
+/// Frames are `data: <json>\n\n` per SSE spec; `: heartbeat\n\n`
+/// comment lines keep NAT / proxy timers happy.
+final class EventStream: NSObject {
     private let url: URL
     private let onDrives: ([Drive]) -> Void
     private let onConnected: () -> Void
     private let onDisconnected: (Error?) -> Void
-    private var task: Task<Void, Never>?
+
+    /// Delegate lives on this queue; UI callbacks bounce back to main.
+    private let queue: OperationQueue
+
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var buffer = Data()
+    private var backoff: TimeInterval = 1.0
+    private var stopped = false
+    private var didFireConnected = false
 
     init(url: URL,
          onDrives: @escaping ([Drive]) -> Void,
@@ -24,87 +35,87 @@ final class EventStream {
         self.onDrives = onDrives
         self.onConnected = onConnected
         self.onDisconnected = onDisconnected
+        self.queue = OperationQueue()
+        self.queue.maxConcurrentOperationCount = 1
+        self.queue.qualityOfService = .utility
+        super.init()
     }
 
-    /// Start (or restart) the stream. Idempotent — cancels any prior
-    /// task first.
     func start() {
-        task?.cancel()
-        task = Task { [weak self] in
-            await self?.loop()
-        }
+        stopped = false
+        openConnection()
     }
 
     func stop() {
+        stopped = true
         task?.cancel()
+        session?.invalidateAndCancel()
         task = nil
+        session = nil
     }
 
-    private func loop() async {
-        // Exponential backoff caps at 30 s. Reset to 1 s after a
-        // clean read that produced at least one event (i.e. the
-        // server is really reachable, not just accepting sockets).
-        var backoff: TimeInterval = 1.0
-        while !Task.isCancelled {
-            let readOne: Bool
-            do {
-                readOne = try await streamOnce()
-                if readOne { backoff = 1.0 }
-            } catch {
-                await MainActor.run { self.onDisconnected(error) }
-            }
-            if Task.isCancelled { break }
-            try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
-            backoff = min(backoff * 2, 30)
+    // MARK: - Internal
+
+    private func openConnection() {
+        buffer.removeAll(keepingCapacity: true)
+        didFireConnected = false
+
+        let config = URLSessionConfiguration.default
+        // No caching: SSE responses should never be cached.
+        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        config.urlCache = nil
+        // A long-lived stream shouldn't get idle-timed-out; heartbeat
+        // (30 s) keeps traffic flowing.
+        config.timeoutIntervalForRequest = 120
+        config.timeoutIntervalForResource = .infinity
+        // Immediate data delivery — no coalescing on the client side.
+        if #available(macOS 13.4, *) {
+            config.httpAdditionalHeaders = ["Accept": "text/event-stream"]
         }
-    }
 
-    /// Runs one connect-and-consume cycle. Returns whether at least
-    /// one data event was received (used to reset backoff).
-    /// Throws on transport error or non-2xx response.
-    private func streamOnce() async throws -> Bool {
         var req = URLRequest(url: url)
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        req.timeoutInterval = 60 // heartbeat cadence is 30s; give it slack
-        let session = URLSession(configuration: .ephemeral)
-        let (bytes, response) = try await session.bytes(for: req)
-        guard let http = response as? HTTPURLResponse else {
-            throw URLError(.badServerResponse)
-        }
-        guard (200...299).contains(http.statusCode) else {
-            throw NSError(domain: "sse",
-                          code: http.statusCode,
-                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
-        }
-        await MainActor.run { self.onConnected() }
 
-        // SSE frame boundary is a blank line. Each frame may contain
-        // multiple `data:` lines (concatenated with newlines) plus
-        // comment lines starting with `:` we ignore.
-        var received = false
-        var dataBuffer = ""
-        for try await line in bytes.lines {
-            if Task.isCancelled { break }
-            if line.isEmpty {
-                if !dataBuffer.isEmpty {
-                    handleEvent(dataBuffer)
-                    dataBuffer = ""
-                    received = true
-                }
-                continue
-            }
-            if line.hasPrefix(":") {
-                continue // comment (heartbeat)
-            }
-            if line.hasPrefix("data:") {
-                var payload = String(line.dropFirst("data:".count))
-                if payload.first == " " { payload = String(payload.dropFirst()) }
-                if !dataBuffer.isEmpty { dataBuffer.append("\n") }
-                dataBuffer.append(payload)
-            }
-            // Other SSE fields (event:, id:, retry:) — none used here.
+        let s = URLSession(configuration: config, delegate: self, delegateQueue: queue)
+        session = s
+        let t = s.dataTask(with: req)
+        task = t
+        t.resume()
+    }
+
+    /// Schedule a reconnect after `backoff` seconds. Caps at 30 s.
+    private func scheduleReconnect() {
+        guard !stopped else { return }
+        let delay = backoff
+        backoff = min(backoff * 2, 30)
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.stopped else { return }
+            self.openConnection()
         }
-        return received
+    }
+
+    /// Parse whatever complete `data: ...\n\n` frames are in `buffer`
+    /// and drop them from the buffer. Partial frames stay for next chunk.
+    private func drainFrames() {
+        while let separator = buffer.range(of: Data("\n\n".utf8)) {
+            let raw = buffer.subdata(in: 0..<separator.lowerBound)
+            buffer.removeSubrange(0..<separator.upperBound)
+            guard let frame = String(data: raw, encoding: .utf8) else { continue }
+
+            var dataLines: [String] = []
+            for line in frame.split(separator: "\n", omittingEmptySubsequences: false) {
+                let s = String(line)
+                if s.hasPrefix(":") { continue }
+                if s.hasPrefix("data:") {
+                    var payload = String(s.dropFirst("data:".count))
+                    if payload.first == " " { payload = String(payload.dropFirst()) }
+                    dataLines.append(payload)
+                }
+                // Other SSE fields (event:, id:, retry:) — none used here.
+            }
+            if dataLines.isEmpty { continue }
+            handleEvent(dataLines.joined(separator: "\n"))
+        }
     }
 
     private func handleEvent(_ json: String) {
@@ -118,14 +129,55 @@ final class EventStream {
             switch env.type {
             case "drives":
                 let drives = env.drives ?? []
-                Task { @MainActor in self.onDrives(drives) }
+                DispatchQueue.main.async { self.onDrives(drives) }
             default:
                 break // forward-compat: ignore unknown types
             }
         } catch {
-            // Malformed event — daemon shouldn't send these. Log to
-            // stderr; keep the connection alive.
-            FileHandle.standardError.write(Data("sse: decode error: \(error)\n".utf8))
+            FileHandle.standardError.write(Data(
+                "sse: decode error: \(error) — frame: \(json.prefix(200))\n".utf8
+            ))
         }
+    }
+}
+
+extension EventStream: URLSessionDataDelegate {
+    func urlSession(_ session: URLSession,
+                    dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let http = response as? HTTPURLResponse,
+              (200...299).contains(http.statusCode) else {
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+        DispatchQueue.main.async { [weak self] in
+            self?.onConnected()
+        }
+        didFireConnected = true
+    }
+
+    func urlSession(_ session: URLSession,
+                    dataTask: URLSessionDataTask,
+                    didReceive data: Data) {
+        buffer.append(data)
+        // Reset backoff once we're actually receiving payload — not
+        // just a TCP handshake.
+        backoff = 1.0
+        drainFrames()
+    }
+
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    didCompleteWithError error: Error?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onDisconnected(error)
+        }
+        // Clean up this session; a new one is created on reconnect.
+        self.task = nil
+        self.session?.invalidateAndCancel()
+        self.session = nil
+        scheduleReconnect()
     }
 }
