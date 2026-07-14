@@ -6,35 +6,13 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
-## [Unreleased]
-
-### Added
-
-- **Product site at [airlock.emdzej.pl](https://airlock.emdzej.pl)**
-  built with VitePress. Content lives in `docs/`; the existing user
-  guide and install guide are the same source. A new `docs/index.md`
-  hero page, a product overview, and a dedicated macOS companion
-  guide are added. `.github/workflows/site.yml` builds and publishes
-  to GitHub Pages on every push to `main` that touches `docs/**`.
-
-### Fixed
-
-- **macOS Sequoia (15) rejecting the companion DMG as "damaged and
-  can't be opened."** `companion/mac/build.sh` now runs an ad-hoc
-  `codesign -s -` on the built .app bundle. Without any signature
-  Sequoia refuses to open a quarantined app *and* no longer offers
-  the classic right-click Open bypass. Ad-hoc signing passes the
-  integrity check; a one-off
-  `xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app`
-  after copying still clears the download quarantine (documented in
-  the new companion page). Proper signing / notarization is queued
-  behind getting an Apple Developer Account.
-
 ## [0.3.0] — 2026-07-14
 
-Adds a macOS menubar companion app plus the daemon-side plumbing to
-push live drive updates over Server-Sent Events. No changes to the
-existing 0.2.0 REST API — companion app is a strict additive layer.
+Adds a macOS menubar companion app, daemon-side plumbing to push live
+drive updates over Server-Sent Events, and a VitePress product site
+at [airlock.emdzej.pl](https://airlock.emdzej.pl). No changes to the
+existing 0.2.0 REST API — the companion app is a strict additive
+layer.
 
 ### Added — Mac companion app (`companion/mac/`)
 
@@ -68,9 +46,14 @@ existing 0.2.0 REST API — companion app is a strict additive layer.
   URLSession.bytes buffering issue on macOS 13/14).
 - **XcodeGen `project.yml`** for developers who want Xcode.
   `.xcodeproj` stays gitignored.
-- **Distributable DMG** via `package.sh`. Unsigned — no Apple
-  Developer Account. First-launch on other Macs needs right-click →
-  Open to bypass Gatekeeper.
+- **Distributable DMG** via `package.sh`. The .app inside is
+  **ad-hoc signed** (`codesign --force --deep --sign -`) so macOS 15
+  Sequoia's stricter Gatekeeper — which no longer honours the old
+  right-click Open bypass on unsigned apps — treats it as a normal
+  first-run prompt instead of "damaged and can't be opened." Not
+  notarized (no Apple Developer Account); users still need one
+  `xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app`
+  after copying, documented in the companion guide.
 
 ### Added — daemon
 
@@ -94,6 +77,19 @@ existing 0.2.0 REST API — companion app is a strict additive layer.
   DMG via `hdiutil`, attaches `AirlockCompanion-<tag>.dmg` +
   sha256 to the same GitHub release the daemon binary and pi-gen
   image are already on.
+
+### Added — product site (`docs/`)
+
+- **[airlock.emdzej.pl](https://airlock.emdzej.pl)** — VitePress site
+  built from the existing `docs/` folder. New landing hero page, a
+  product overview, and a dedicated macOS companion guide sit next
+  to the existing user guide and install guide (same source, no
+  duplication).
+- `.github/workflows/site.yml` builds and publishes to GitHub Pages
+  on every push to `main` that touches `docs/**`, using
+  `actions/deploy-pages@v4`. Custom domain via `docs/public/CNAME`;
+  DNS + Pages source (`GitHub Actions`) configured out-of-band on
+  the repo.
 
 ### Version surfaces
 
