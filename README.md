@@ -43,11 +43,12 @@ tightening levels.
 
 ## Status
 
-Version **0.2.0** — first tag. Runs on real hardware (Raspberry Pi 4 on
-Debian 13 / Trixie). Mounts, file management, format, volume relabel,
-opt-in USB / boot / Wi-Fi hardening all work; the flashable pi-gen image
-still needs a full build round-trip. See [`CHANGELOG.md`](CHANGELOG.md)
-for what's in the release.
+Version **0.3.0** — daemon plus a macOS menubar companion app.
+Runs on real hardware (Raspberry Pi 4 on Debian 13 / Trixie).
+Mounts, file management, format, flash, dump, fsck, volume relabel,
+opt-in USB / boot / Wi-Fi hardening, and now a live-updating menu-bar
+client with silent mount, auto-mount, and auto-unmount-on-eject.
+See [`CHANGELOG.md`](CHANGELOG.md) for what's in the release.
 
 ## Design
 

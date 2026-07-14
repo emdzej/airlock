@@ -6,30 +6,78 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
-## [Unreleased]
+## [0.3.0] — 2026-07-14
+
+Adds a macOS menubar companion app plus the daemon-side plumbing to
+push live drive updates over Server-Sent Events. No changes to the
+existing 0.2.0 REST API — companion app is a strict additive layer.
 
 ### Added — Mac companion app (`companion/mac/`)
 
-- New menubar-only `AirlockCompanion.app` (Swift Package + `LSUIElement`
-  bundle) that discovers airlock instances via a new `_airlock._tcp`
-  mDNS advertisement, lists their drives, and offers per-drive Mount /
-  Unmount / Reveal / Eject / Copy SMB URL and per-host Eject-all /
-  Open web UI. Preferences window with "Auto-mount all discovered
-  drives" and "Start at login" toggles.
-- Live push updates via new daemon SSE endpoint `GET /api/events`
-  (Server-Sent Events). Replaces the earlier 3 s polling. Heartbeat
-  every 30 s, exponential-backoff reconnect on client side.
-- Persistent host store: airlocks the app has seen before are shown
-  in the menu even when currently offline, with a `last seen 2h ago`
-  status line. Prunes entries not seen in 30 days.
-- Colored status dot per host in the menu (green live · red error ·
-  grey offline / connecting).
-- XcodeGen `project.yml` for developers who want the Xcode UI;
-  `.xcodeproj` stays out of git.
-- Release workflow gets a `companion-mac` job that runs on
-  `macos-14`, builds the app and DMG (unsigned — no Developer Account
-  yet), and attaches `AirlockCompanion-<tag>.dmg` + sha256 to the
-  same GitHub release.
+- New menubar-only `AirlockCompanion.app` (Swift Package +
+  `LSUIElement`). Discovers airlock instances via the new
+  `_airlock._tcp` Bonjour service; lists their drives; per-drive
+  actions **Mount** / **Mount and Open in Finder** / **Unmount** /
+  **Reveal in Finder** / **Copy SMB URL** / **Eject drive from
+  airlock**; per-host **Eject all drives** and **Open web UI**.
+- **Silent mount** via `NetFSMountURLSync` from `NetFS.framework` —
+  same DiskArbitration path Finder uses, but no window pops on
+  mount. `NSWorkspace.open(smb://…)` was the first draft; it worked
+  but always opened a window, making "Mount" and "Mount and Open"
+  indistinguishable.
+- **Auto-unmount reconciliation**: when a drive is ejected on the
+  daemon side (web UI, GPIO button, format), the Mac's local SMB
+  mount is dropped automatically. Skipped when the host is
+  currently offline so a Pi reboot doesn't yank live mounts.
+- **Preferences window**: `Auto-mount all discovered drives`,
+  `Open in Finder after mounting`, `Start at login` (via
+  `SMAppService.mainApp` on macOS 13+), plus a footer with the app
+  version + a GitHub link.
+- **Persistent host store**: airlocks the app has seen appear in the
+  menu even when offline, with `offline · 2h ago`. Prune after 30
+  days of not-seen. Restores drive list from cache on launch so the
+  menu is populated before the first SSE reconnect finishes.
+- **Coloured host status dot**: green live · grey offline · red
+  error, with the last error inline.
+- **Live updates via SSE** with exponential-backoff reconnect and
+  `URLSessionDataDelegate`-based frame parsing (bypasses the
+  URLSession.bytes buffering issue on macOS 13/14).
+- **XcodeGen `project.yml`** for developers who want Xcode.
+  `.xcodeproj` stays gitignored.
+- **Distributable DMG** via `package.sh`. Unsigned — no Apple
+  Developer Account. First-launch on other Macs needs right-click →
+  Open to bypass Gatekeeper.
+
+### Added — daemon
+
+- **`GET /api/events`** — Server-Sent Events stream broadcasting the
+  current drive list on every mount-manager change. Initial snapshot
+  on connect, heartbeat comment lines every 30 s, event types are
+  wrapped in an envelope (`{"type":"drives","drives":[...]}`) so we
+  can add more event kinds without a breaking wire change.
+- `mount.Manager.AddListener` so multiple downstream consumers can
+  subscribe to drive-change events. The Samba writer and the SSE
+  broadcaster both hook in via this now instead of wrapping the
+  primary listener.
+- Additional `_airlock._tcp` Bonjour advertisement (port 80, TXT
+  `api=1 path=/`). Companion apps browse for exactly that instead of
+  filtering `_smb._tcp` / `_http._tcp`.
+
+### Added — release workflow
+
+- New `companion-mac` job on `macos-14`. Stamps `Info.plist` with
+  the release tag, builds the .app via `swift build`, packages a
+  DMG via `hdiutil`, attaches `AirlockCompanion-<tag>.dmg` +
+  sha256 to the same GitHub release the daemon binary and pi-gen
+  image are already on.
+
+### Version surfaces
+
+- Web UI footer already links `Version 0.3.0` → the repo.
+- Companion app's Preferences window shows `Airlock Companion 0.3.0`
+  at the bottom with a matching GitHub link.
+- Daemon `main.version` bumped to `0.3.0`; release workflow
+  overrides via `-ldflags -X main.version=<tag>` for tagged builds.
 
 ## [0.2.0] — 2026-07-09
 

@@ -77,8 +77,25 @@ private struct PreferencesView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            Divider()
+            HStack {
+                Text("Airlock Companion \(appVersion)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Link("github.com/emdzej/airlock",
+                     destination: URL(string: "https://github.com/emdzej/airlock")!)
+                    .font(.caption)
+            }
         }
         .padding(20)
         .frame(width: 380)
+    }
+
+    /// Read the app's marketing version from Info.plist so the string
+    /// in the UI tracks whatever the build was stamped with (bump the
+    /// plist / project.yml, no code edit).
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
     }
 }
