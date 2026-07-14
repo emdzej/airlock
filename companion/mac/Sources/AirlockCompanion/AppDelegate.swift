@@ -1,18 +1,17 @@
 import AppKit
 
-/// Menu-bar shell. Owns the NSStatusItem, drives discovery, and
-/// rebuilds the menu whenever the discovered set of hosts (or their
-/// drive lists) changes.
+/// Menu-bar shell. Owns the NSStatusItem, discovery, mount manager,
+/// and action center; wires them together on launch.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let discovery = Discovery()
+    private let mounts = MountManager()
+    private lazy var actions = ActionCenter(discovery: discovery, mounts: mounts)
     private var refreshTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            // externaldrive.badge.wifi is available macOS 12+ — perfect
-            // metaphor: a drive accessible over the network.
             button.image = NSImage(
                 systemSymbolName: "externaldrive.badge.wifi",
                 accessibilityDescription: "Airlock"
@@ -21,21 +20,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         rebuildMenu()
 
-        discovery.onChange = { [weak self] in
-            DispatchQueue.main.async { self?.rebuildMenu() }
+        // Rebuild the menu whenever discovery / local mounts change.
+        let onChange: () -> Void = { [weak self] in
+            DispatchQueue.main.async {
+                self?.actions.maybeAutoMount()
+                self?.rebuildMenu()
+            }
         }
+        discovery.onChange = onChange
+        mounts.onChange = onChange
+
         discovery.start()
 
-        // Poll each known host's /api/drives every 3 s so the drive
-        // list stays fresh even when the mDNS view is unchanged.
+        // Poll each host's /api/drives every 3 s so remote drive
+        // changes reach the menu without the user clicking.
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.discovery.refreshAllDrives()
         }
+
+        Notifier.shared.requestAuthorizationIfNeeded()
     }
 
     private func rebuildMenu() {
         let menu = NSMenu()
-        MenuBuilder.build(into: menu, hosts: discovery.hosts)
+        MenuBuilder.build(into: menu, hosts: discovery.hosts,
+                          mounts: mounts, actions: actions)
         statusItem.menu = menu
     }
 }
