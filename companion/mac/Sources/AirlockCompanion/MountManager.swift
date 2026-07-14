@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import NetFS
 
 /// Tracks local SMB mounts of airlock shares. Mounts are delegated to
 /// macOS's built-in SMB mounter (via `NSWorkspace.open(smb://…)`) —
@@ -40,37 +41,51 @@ final class MountManager {
         return mountPath(host: host, drive: drive) != nil
     }
 
-    /// Mount `drive` from `host`. Hands off to macOS's SMB mounter
-    /// via `open smb://guest:@host/share`. Completion fires once the
-    /// mount table reflects the new mount (up to 3 s wait).
+    /// Mount `drive` from `host` silently via NetFSMountURLSync.
+    /// Unlike NSWorkspace.open(smb://) — which opens a Finder window
+    /// on every successful mount — this hits the same DiskArbitration
+    /// path as Finder without any UI. `mountPath` is populated as
+    /// soon as the underlying `mount(2)` returns; no polling needed.
     func mount(host: HostState, drive: Drive, completion: @escaping (Error?) -> Void) {
-        guard let url = smbURL(host: host, drive: drive) else {
+        guard let url = smbURL(host: host, drive: drive) as CFURL? else {
             completion(NSError(domain: "airlock.mount", code: -1,
                                userInfo: [NSLocalizedDescriptionKey: "invalid SMB URL"]))
             return
         }
-        let cfg = NSWorkspace.OpenConfiguration()
-        cfg.activates = false // don't bring Finder to the foreground
-        NSWorkspace.shared.open(url, configuration: cfg) { [weak self] _, err in
+        // NetFSMountURLSync blocks — run off the main queue.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var mountedRef: Unmanaged<CFArray>?
+            let status = NetFSMountURLSync(url, nil, nil, nil, nil, nil, &mountedRef)
+            let paths: [String] = (mountedRef?.takeRetainedValue() as? [String]) ?? []
             DispatchQueue.main.async {
-                if let err {
-                    completion(err)
-                    return
-                }
-                // NSWorkspace.open resolves as soon as the URL is
-                // handed to Finder, not when the mount is complete.
-                // Poll the mount table for a short window.
-                self?.waitForMount(host: host, drive: drive, tries: 12) { ok in
-                    self?.refresh()
-                    if ok {
-                        completion(nil)
-                    } else {
-                        completion(NSError(domain: "airlock.mount", code: -2,
-                                           userInfo: [NSLocalizedDescriptionKey: "mount didn't appear in mount table"]))
+                if status == 0 {
+                    // If the mount table hasn't updated by the time
+                    // we're called, seed it from the paths NetFS just
+                    // returned. Later refresh() calls reconcile.
+                    if let path = paths.first {
+                        self?.mountPoints[self!.key(host: host, drive: drive)] = path
                     }
+                    self?.refresh()
+                    completion(nil)
+                } else {
+                    completion(NSError(
+                        domain: "airlock.mount",
+                        code: Int(status),
+                        userInfo: [NSLocalizedDescriptionKey: Self.netFSErrorMessage(status)]))
                 }
             }
         }
+    }
+
+    /// Translate NetFS status codes into human-readable messages.
+    /// Most are POSIX errno values (permission denied, host down, etc.)
+    /// — strerror covers those. A few are NetFS-specific negatives
+    /// (e.g. -6600 series) and pass through as-is.
+    private static func netFSErrorMessage(_ status: Int32) -> String {
+        if status > 0 {
+            return String(cString: strerror(status))
+        }
+        return "NetFS error \(status)"
     }
 
     /// Unmount `drive` from `host` via `/sbin/umount`. Best-effort —
@@ -125,30 +140,6 @@ final class MountManager {
         let allowed = CharacterSet.urlPathAllowed
         let share = drive.shareName.addingPercentEncoding(withAllowedCharacters: allowed) ?? drive.shareName
         return URL(string: "smb://guest:@\(host.hostname)/\(share)")
-    }
-
-    private func waitForMount(host: HostState, drive: Drive,
-                              tries: Int,
-                              completion: @escaping (Bool) -> Void) {
-        var remaining = tries
-        func tick() {
-            let out = shell("/sbin/mount")
-            for line in out.split(separator: "\n", omittingEmptySubsequences: true) {
-                if let entry = parseMountLine(String(line)),
-                   entry.host == hostKey(host),
-                   entry.share == drive.shareName {
-                    completion(true)
-                    return
-                }
-            }
-            remaining -= 1
-            if remaining <= 0 {
-                completion(false)
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { tick() }
-        }
-        tick()
     }
 
     /// Parse a single `mount` line for an SMB entry.

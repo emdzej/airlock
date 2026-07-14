@@ -7,7 +7,11 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "AirlockCompanion",
-            path: "Sources/AirlockCompanion"
+            path: "Sources/AirlockCompanion",
+            linkerSettings: [
+                // NetFSMountURLSync (used for silent SMB mount).
+                .linkedFramework("NetFS")
+            ]
         )
     ]
 )
