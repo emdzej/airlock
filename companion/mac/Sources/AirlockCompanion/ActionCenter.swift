@@ -128,6 +128,42 @@ final class ActionCenter: NSObject {
 
     // MARK: - Auto-mount
 
+    /// If a drive we've mounted locally has been ejected on the daemon
+    /// side (via web UI, physical button, or format), the Mac's SMB
+    /// mount is stale — I/O will fail. Detect gone drives from the
+    /// SSE snapshot and unmount them here.
+    ///
+    /// Skip hosts that went offline entirely — the drive list is
+    /// preserved from last-known state, and unmounting on transient
+    /// network hiccups would be user-hostile.
+    func reconcileEjected() {
+        var visibleKeys = Set<String>()
+        for host in discovery.hosts where host.isReachable {
+            for drive in host.drives {
+                visibleKeys.insert("\(host.hostname)/\(drive.shareName)")
+            }
+        }
+        for key in Array(mounts.mountPoints.keys) {
+            let hostName = String(key.split(separator: "/", maxSplits: 1).first ?? "")
+            // Only reconcile when the owning host is currently reachable
+            // — otherwise a Pi reboot would rip mounts out from under us.
+            let hostOnline = discovery.hosts.first { $0.hostname == hostName }?.isReachable ?? false
+            guard hostOnline else { continue }
+            if !visibleKeys.contains(key) {
+                let label = key.split(separator: "/", maxSplits: 1).last.map(String.init) ?? key
+                mounts.unmountByKey(key) { err in
+                    if let err {
+                        Notifier.shared.error("Auto-unmount failed: \(label)",
+                                              body: err.localizedDescription)
+                    } else {
+                        Notifier.shared.info("Unmounted \(label)",
+                                             body: "Drive was ejected on airlock")
+                    }
+                }
+            }
+        }
+    }
+
     /// Auto-mount every currently-visible drive that isn't already
     /// mounted locally. Called after each discovery refresh.
     func maybeAutoMount() {

@@ -20,8 +20,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
 
         // Rebuild the menu whenever discovery / local mounts change.
+        // Order: (1) reconcile ejected drives (unmount stale locals),
+        // then (2) auto-mount any newly-appeared drives, then (3)
+        // rebuild the menu with the final state.
         let onChange: () -> Void = { [weak self] in
             DispatchQueue.main.async {
+                self?.actions.reconcileEjected()
                 self?.actions.maybeAutoMount()
                 self?.rebuildMenu()
             }

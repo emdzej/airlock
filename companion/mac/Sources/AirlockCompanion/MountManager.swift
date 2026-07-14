@@ -91,13 +91,20 @@ final class MountManager {
     /// Unmount `drive` from `host` via `/sbin/umount`. Best-effort —
     /// `umount` fails if a Finder window has files open.
     func unmount(host: HostState, drive: Drive, completion: @escaping (Error?) -> Void) {
-        guard let mp = mountPath(host: host, drive: drive) else {
+        unmountByKey(key(host: host, drive: drive), completion: completion)
+    }
+
+    /// Unmount whichever local mount is keyed by "<host>/<share>".
+    /// Used for reconciliation after the daemon reports an ejection —
+    /// we may no longer have a Drive object for the vanished share.
+    func unmountByKey(_ key: String, completion: @escaping (Error?) -> Void) {
+        guard let mp = mountPoints[key] else {
             completion(nil)
             return
         }
         run("/sbin/umount", [mp]) { [weak self] err in
             if err == nil {
-                self?.mountPoints.removeValue(forKey: self!.key(host: host, drive: drive))
+                self?.mountPoints.removeValue(forKey: key)
                 self?.onChange?()
             }
             completion(err)
