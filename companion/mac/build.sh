@@ -23,6 +23,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 install -m 0755 .build/release/AirlockCompanion "$APP/Contents/MacOS/AirlockCompanion"
 install -m 0644 Info.plist                       "$APP/Contents/Info.plist"
+install -m 0644 assets/AppIcon.icns              "$APP/Contents/Resources/AppIcon.icns"
 
 # PkgInfo tells the Finder this is an app.
 printf '%s' 'APPL????' > "$APP/Contents/PkgInfo"

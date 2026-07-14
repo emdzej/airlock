@@ -6,6 +6,21 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [Unreleased]
+
+### Added
+
+- **App icon for the macOS companion.** SVG source at
+  `companion/mac/assets/AppIcon.svg` (an airlock-hatch metaphor in
+  the site's green gradient), rendered to `AppIcon.icns` via a
+  `make-icon.sh` helper (librsvg + `iconutil`). Both files are
+  committed so `build.sh` and CI don't need librsvg — regenerate
+  locally with `./make-icon.sh` after editing the SVG. Info.plist
+  gets `CFBundleIconFile: AppIcon`; the .app bundle picks it up in
+  Finder, Launchpad, and (if you unhide the Dock) the Dock. The
+  menu-bar icon stays as the `externaldrive.badge.wifi` SF Symbol —
+  optimized for 22 pt template rendering.
+
 ## [0.3.0] — 2026-07-14
 
 Adds a macOS menubar companion app, daemon-side plumbing to push live
