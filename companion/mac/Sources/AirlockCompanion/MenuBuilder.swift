@@ -114,6 +114,13 @@ enum MenuBuilder {
             sub.addItem(mount)
         }
 
+        let copyItem = NSMenuItem(title: "Copy SMB URL",
+                                  action: #selector(ActionCenter.copySMBURL(_:)),
+                                  keyEquivalent: "")
+        copyItem.target = actions
+        copyItem.representedObject = ctx
+        sub.addItem(copyItem)
+
         sub.addItem(NSMenuItem.separator())
 
         let eject = NSMenuItem(title: "Eject drive from airlock",

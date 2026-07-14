@@ -27,16 +27,48 @@ final class PreferencesWindowController {
 
 private struct PreferencesView: View {
     @AppStorage("autoMountAll") private var autoMountAll = false
+    @State private var loginItemEnabled: Bool = LoginItem.isEnabled
+    @State private var loginItemError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle("Auto-mount all discovered drives", isOn: $autoMountAll)
-                .toggleStyle(.checkbox)
-                .font(.body)
-            Text("When enabled, every drive that appears on any airlock on your local network is automatically mounted on this Mac. Mount points follow the pattern /Volumes/<share>-on-<host>.")
-                .font(.callout)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Auto-mount all discovered drives", isOn: $autoMountAll)
+                    .toggleStyle(.checkbox)
+                Text("Every drive that appears on any airlock on your local network is automatically mounted on this Mac. Mount points: /Volumes/<share>-on-<host>.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Start at login", isOn: Binding(
+                    get: { loginItemEnabled },
+                    set: { newValue in
+                        do {
+                            try LoginItem.setEnabled(newValue)
+                            loginItemEnabled = LoginItem.isEnabled
+                            loginItemError = LoginItem.isApproved
+                                ? nil
+                                : "Approval pending — enable in System Settings → Login Items."
+                        } catch {
+                            loginItemError = error.localizedDescription
+                            loginItemEnabled = LoginItem.isEnabled
+                        }
+                    }
+                )).toggleStyle(.checkbox)
+                if let err = loginItemError {
+                    Text(err)
+                        .font(.callout)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Airlock Companion launches automatically when you log in.")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
         .padding(20)
         .frame(width: 380)

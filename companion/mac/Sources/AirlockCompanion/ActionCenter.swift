@@ -91,6 +91,19 @@ final class ActionCenter: NSObject {
         NSWorkspace.shared.open(ctx.host.baseURL)
     }
 
+    @objc func copySMBURL(_ sender: NSMenuItem) {
+        guard let ctx = sender.representedObject as? DriveContext else { return }
+        let host = ctx.host.hostname
+        let share = ctx.drive.shareName
+        // We're macOS-only, so the smb:// form is right. Windows users
+        // paste \\host\share into Explorer; if we ever ship a Windows
+        // client we can branch here.
+        let text = "smb://\(host)/\(share)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        Notifier.shared.info("Copied \(text)")
+    }
+
     @objc func openPreferences(_ sender: NSMenuItem) {
         preferencesWindow.show()
     }
