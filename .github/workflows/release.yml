@@ -7,61 +7,69 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. 0.2.0)'
+        description: 'Existing tag to (re)build and release (e.g. 0.4.0)'
         required: true
 
 permissions:
-  contents: write
+  contents: read
+
+# One place to resolve the tag. It only ever reaches shell scripts via
+# $TAG (environment), never via ${{ }} interpolation into `run:`.
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  # Checkout ref: the tag itself, also for workflow_dispatch (which would
+  # otherwise build whatever branch the dispatch was started from).
+  CHECKOUT_REF: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
 jobs:
   release:
     name: Build & publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release, upload assets
+      id-token: write        # OIDC token for build provenance
+      attestations: write    # store the attestation
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
         with:
-          go-version: '1.22'
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Validate tag
+        run: |
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Refusing to release: '$TAG' is not a semver-style tag" >&2
+            exit 1
+          fi
+          echo "Releasing ${TAG}"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
           check-latest: true
           cache: true
 
-      - name: Resolve tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Releasing ${TAG}"
-
       - name: Build linux/arm64 binary
-        env:
-          VERSION: ${{ steps.tag.outputs.tag }}
         run: |
           mkdir -p dist
           GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
             -trimpath \
-            -ldflags="-s -w -X main.version=${VERSION}" \
+            -ldflags="-s -w -X main.version=${TAG}" \
             -o dist/airlockd \
             ./cmd/airlockd
           file dist/airlockd
 
       - name: Package binary tarball
-        env:
-          VERSION: ${{ steps.tag.outputs.tag }}
         working-directory: dist
         run: |
-          tar czf "airlockd-${VERSION}-linux-arm64.tar.gz" airlockd
-          sha256sum "airlockd-${VERSION}-linux-arm64.tar.gz" > "airlockd-${VERSION}-linux-arm64.tar.gz.sha256"
+          tar czf "airlockd-${TAG}-linux-arm64.tar.gz" airlockd
+          sha256sum "airlockd-${TAG}-linux-arm64.tar.gz" > "airlockd-${TAG}-linux-arm64.tar.gz.sha256"
 
+      # install.sh installs every config file from this bundle (it
+      # downloads it when piped from curl), so this layout is a contract
+      # with scripts/install.sh — keep the two in sync.
       - name: Package offline install bundle
-        env:
-          VERSION: ${{ steps.tag.outputs.tag }}
         run: |
-          B="bundle/airlock-${VERSION}"
+          B="bundle/airlock-${TAG}"
           mkdir -p "$B/etc/systemd/system" \
                    "$B/etc/samba/smb.conf.d" \
                    "$B/etc/avahi/services" \
@@ -84,57 +92,56 @@ jobs:
              "$B/etc/udev/rules.d/99-airlock.rules"
           cp dist/airlockd "$B/airlockd"
 
-          cd bundle && tar czf "../dist/airlock-${VERSION}-bundle.tar.gz" "airlock-${VERSION}"
+          (cd bundle && tar czf "../dist/airlock-${TAG}-bundle.tar.gz" "airlock-${TAG}")
+
+          # Checksums are written from inside dist/ so the .sha256 files
+          # carry bare filenames (`sha256sum -c` works next to the download).
+          cp scripts/install.sh dist/install.sh
+          cd dist
+          sha256sum "airlock-${TAG}-bundle.tar.gz" > "airlock-${TAG}-bundle.tar.gz.sha256"
+          sha256sum install.sh > install.sh.sha256
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/airlockd-${{ env.TAG }}-linux-arm64.tar.gz
+            dist/airlock-${{ env.TAG }}-bundle.tar.gz
+            dist/install.sh
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: airlock ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ env.TAG }}
+          name: airlock ${{ env.TAG }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/airlockd-${{ steps.tag.outputs.tag }}-linux-arm64.tar.gz
-            dist/airlockd-${{ steps.tag.outputs.tag }}-linux-arm64.tar.gz.sha256
-            dist/airlock-${{ steps.tag.outputs.tag }}-bundle.tar.gz
-            scripts/install.sh
+            dist/airlockd-${{ env.TAG }}-linux-arm64.tar.gz
+            dist/airlockd-${{ env.TAG }}-linux-arm64.tar.gz.sha256
+            dist/airlock-${{ env.TAG }}-bundle.tar.gz
+            dist/airlock-${{ env.TAG }}-bundle.tar.gz.sha256
+            dist/install.sh
+            dist/install.sh.sha256
 
   image:
     name: Build flashable pi-gen image
+    # The release job creates the release; attaching here afterwards
+    # avoids three jobs racing to create it.
+    needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
         with:
-          go-version: '1.22'
-          check-latest: true
-          cache: true
+          ref: ${{ env.CHECKOUT_REF }}
 
-      - name: Resolve tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Build arm64 binary for image
-        env:
-          VERSION: ${{ steps.tag.outputs.tag }}
-        run: |
-          mkdir -p bin
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
-            -trimpath \
-            -ldflags="-s -w -X main.version=${VERSION}" \
-            -o bin/airlockd.arm64 \
-            ./cmd/airlockd
-
+      # Before setup-go: this wipes /opt/hostedtoolcache, where setup-go
+      # installs the toolchain that build.sh needs.
       - name: Free disk space
         run: |
           # pi-gen needs ~15 GB free; GHA ubuntu runners ship with
@@ -143,17 +150,25 @@ jobs:
                       /usr/local/lib/android /usr/local/share/boost || true
           df -h /
 
-      # pi-gen's build-docker.sh runs `which qemu-arm` on the HOST (not
-      # inside the container) before starting the build. On the amd64
-      # runner that means we need two things:
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      # pi-gen's build-docker.sh (arm64 branch) runs `which qemu-aarch64`
+      # on the HOST (not inside the container) before starting the build.
+      # On the amd64 runner that means we need two things:
       #
-      #   1. The `qemu-arm` binary itself on the host filesystem — from
-      #      the `qemu-user-binfmt` apt package. `docker/setup-qemu-action`
-      #      alone doesn't put it there; it only registers binfmt_misc
-      #      handlers via a privileged Docker container.
+      #   1. The `qemu-aarch64` binary itself on the host filesystem —
+      #      from `qemu-user`, pulled in by `qemu-user-binfmt`.
+      #      `docker/setup-qemu-action` alone doesn't put it there; it
+      #      only registers binfmt_misc handlers via a privileged Docker
+      #      container. (Not qemu-user-static: it replaces
+      #      qemu-user-binfmt and only ships qemu-aarch64-static.)
       #
-      #   2. binfmt_misc registered for the ELF/ARM magic bytes so the
-      #      kernel actually hands ARM binaries to qemu. The apt install
+      #   2. binfmt_misc registered for the ELF/aarch64 magic bytes so the
+      #      kernel actually hands arm64 binaries to qemu. The apt install
       #      registers these via `binfmt-support`, but we still keep the
       #      setup-qemu-action step as a belt-and-braces guarantee across
       #      any base-image drift on ubuntu-latest.
@@ -161,72 +176,75 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            qemu-user-binfmt qemu-user-static binfmt-support
-          which qemu-arm
-          qemu-arm --version | head -1
+            qemu-user qemu-user-binfmt binfmt-support
+          which qemu-aarch64
+          qemu-aarch64 --version | head -1
 
       - name: Register QEMU binfmt handlers (belt & braces)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
-          platforms: arm,arm64
+          platforms: arm64
 
+      # build.sh pins pi-gen (PIGEN_REF) and cross-compiles airlockd via
+      # `make airlockd-arm64`, which stamps $VERSION into the binary.
       - name: Build image with pi-gen
         env:
-          PIGEN_REF: master
+          VERSION: ${{ env.TAG }}
         run: |
           ./image/pi-gen/build.sh
 
       - name: Package image
-        env:
-          VERSION: ${{ steps.tag.outputs.tag }}
         run: |
           mkdir -p dist
-          SRC=$(ls image/pi-gen/.pi-gen/deploy/*.img.xz 2>/dev/null | head -1)
-          if [ -z "$SRC" ]; then
-              echo "pi-gen did not produce a .img.xz — build likely failed" >&2
+          # pi-gen names it image_<date>-<IMG_NAME><IMG_SUFFIX>.img.xz;
+          # our stage has an empty suffix (stage2's -lite export is
+          # skipped by build.sh, but match by name regardless).
+          shopt -s nullglob
+          SRCS=(image/pi-gen/.pi-gen/deploy/*-airlock.img.xz)
+          if [ "${#SRCS[@]}" -ne 1 ]; then
+              echo "expected exactly one *-airlock.img.xz, found ${#SRCS[@]} — build likely failed" >&2
               ls -la image/pi-gen/.pi-gen/deploy/ >&2 || true
               exit 1
           fi
-          DST="dist/airlock-${VERSION}-linux-arm64.img.xz"
-          cp "$SRC" "$DST"
-          sha256sum "$DST" > "${DST}.sha256"
-          ls -lh "$DST" "${DST}.sha256"
+          NAME="airlock-${TAG}-linux-arm64.img.xz"
+          cp "${SRCS[0]}" "dist/${NAME}"
+          cd dist
+          sha256sum "${NAME}" > "${NAME}.sha256"
+          ls -lh "${NAME}" "${NAME}.sha256"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/airlock-${{ env.TAG }}-linux-arm64.img.xz
 
       - name: Attach image to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ env.TAG }}
           fail_on_unmatched_files: true
           files: |
-            dist/airlock-${{ steps.tag.outputs.tag }}-linux-arm64.img.xz
-            dist/airlock-${{ steps.tag.outputs.tag }}-linux-arm64.img.xz.sha256
+            dist/airlock-${{ env.TAG }}-linux-arm64.img.xz
+            dist/airlock-${{ env.TAG }}-linux-arm64.img.xz.sha256
 
   companion-mac:
     name: Build Mac companion DMG
-    runs-on: macos-14
+    needs: release
+    runs-on: macos-15
     timeout-minutes: 20
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Resolve tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
 
       - name: Set version in Info.plist to release tag
         working-directory: companion/mac
-        env:
-          VERSION: ${{ steps.tag.outputs.tag }}
         run: |
-          plutil -replace CFBundleShortVersionString -string "${VERSION}" Info.plist
-          plutil -replace CFBundleVersion            -string "${VERSION}" Info.plist
+          plutil -replace CFBundleShortVersionString -string "${TAG}" Info.plist
+          plutil -replace CFBundleVersion            -string "${TAG}" Info.plist
 
       - name: Build
         working-directory: companion/mac
@@ -237,21 +255,27 @@ jobs:
         run: ./package.sh
 
       - name: Rename DMG to tag
-        working-directory: companion/mac
-        env:
-          VERSION: ${{ steps.tag.outputs.tag }}
+        working-directory: companion/mac/build
         run: |
-          SRC=$(ls build/AirlockCompanion-*.dmg | head -1)
-          DST="build/AirlockCompanion-${VERSION}.dmg"
+          shopt -s nullglob
+          SRCS=(AirlockCompanion-*.dmg)
+          [ "${#SRCS[@]}" -ge 1 ] || { echo "package.sh produced no DMG" >&2; exit 1; }
+          SRC="${SRCS[0]}"
+          DST="AirlockCompanion-${TAG}.dmg"
           if [ "$SRC" != "$DST" ]; then mv "$SRC" "$DST"; fi
           shasum -a 256 "$DST" > "${DST}.sha256"
-          ls -lh build/*.dmg build/*.sha256
+          ls -lh ./*.dmg ./*.sha256
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: companion/mac/build/AirlockCompanion-${{ env.TAG }}.dmg
 
       - name: Attach DMG to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ env.TAG }}
           fail_on_unmatched_files: true
           files: |
-            companion/mac/build/AirlockCompanion-${{ steps.tag.outputs.tag }}.dmg
-            companion/mac/build/AirlockCompanion-${{ steps.tag.outputs.tag }}.dmg.sha256
+            companion/mac/build/AirlockCompanion-${{ env.TAG }}.dmg
+            companion/mac/build/AirlockCompanion-${{ env.TAG }}.dmg.sha256
