@@ -1,0 +1,73 @@
+#!/bin/sh
+# airlock-ssh-host-keys — keep SSH host keys stable across reboots.
+#
+# The image's root is a tmpfs overlay, so /etc/ssh is back to "no keys"
+# on every boot and the stock first-boot units (regenerate_ssh_host_keys,
+# sshd-keygen, cloud-init's ssh module) mint a fresh set each time —
+# every client then sees a host-key-changed warning. This script runs
+# after those and before ssh.service:
+#
+#   1. Any valid key saved under $STORE replaces whatever was generated
+#      this boot.
+#   2. `ssh-keygen -A` fills in any key type still missing.
+#   3. Every key not yet saved is copied to $STORE for next boot.
+#
+# $STORE is on the FAT boot partition, which cannot hold Unix
+# permissions: anyone with physical access to the SD card can read the
+# private keys. Delete the directory to rotate the keys on next boot.
+#
+# Never fails hard — a read-only or missing boot partition just means
+# keys are not persisted, and sshd still starts.
+
+set -u
+
+STORE=/boot/firmware/airlock/ssh
+
+log() { echo "airlock-ssh-host-keys: $*"; }
+
+restored=0
+for key in "$STORE"/ssh_host_*_key; do
+    [ -f "$key" ] || continue
+    name="$(basename "$key")"
+    # Derive the public half from the private key: validates the key and
+    # means a missing / stale .pub in $STORE can't cause a mismatch.
+    if ! pub="$(ssh-keygen -y -f "$key" 2>/dev/null)"; then
+        log "ignoring unreadable $key"
+        continue
+    fi
+    if [ "$restored" -eq 0 ]; then
+        # First good key: drop this boot's freshly generated set so no
+        # key type is left that changes on every boot.
+        rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+    fi
+    install -m 0600 -o root -g root "$key" "/etc/ssh/$name"
+    printf '%s\n' "$pub" > "/etc/ssh/$name.pub"
+    chmod 0644 "/etc/ssh/$name.pub"
+    restored=$((restored + 1))
+done
+[ "$restored" -gt 0 ] && log "restored $restored host key(s) from $STORE"
+
+# Generate any key type that's still missing (no-op if all present).
+ssh-keygen -A
+
+if ! mkdir -p "$STORE" 2>/dev/null; then
+    log "$STORE not writable; host keys will change on next boot"
+    exit 0
+fi
+for key in /etc/ssh/ssh_host_*_key; do
+    [ -f "$key" ] || continue
+    name="$(basename "$key")"
+    # Already saved (and readable) — keep it. A corrupt copy is replaced.
+    ssh-keygen -y -f "$STORE/$name" >/dev/null 2>&1 && continue
+    # FAT can't store the mode (restore re-applies 0600). The trailing
+    # `sync` keeps a power yank right after first boot from leaving a
+    # truncated key behind.
+    if cp "$key" "$STORE/$name" && cp "$key.pub" "$STORE/$name.pub"; then
+        log "saved $name to $STORE"
+    else
+        rm -f "$STORE/$name" "$STORE/$name.pub"
+        log "could not save $name to $STORE"
+    fi
+done
+sync "$STORE" 2>/dev/null || sync
+exit 0

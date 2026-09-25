@@ -6,20 +6,26 @@ Wants=network-online.target smbd.service
 
 [Service]
 Type=simple
+# scripts/install.sh rewrites this path when AIRLOCK_PREFIX is not /usr/local.
 ExecStart=/usr/local/bin/airlockd
 Restart=on-failure
 RestartSec=3
+# On SIGTERM airlockd waits for running format / flash / fsck jobs to
+# finish rather than abandoning a half-written device. Flashing a large
+# image can take many minutes; the default 90 s would SIGKILL it.
+TimeoutStopSec=1h
 User=root
 StandardOutput=journal
 StandardError=journal
 
-# --- systemd sandboxing (seccomp + prctl only) ---
+# --- systemd sandboxing (seccomp + prctl + capabilities only) ---
 # We must NOT put airlockd in a private mount namespace: mounts made by
 # the daemon there wouldn't propagate to smbd (which runs in the host
 # namespace) and SMB shares would appear empty. That rules out
-# ProtectSystem=, ProtectHome=, PrivateTmp=, ReadWritePaths=,
-# ProtectKernelTunables=, ProtectKernelModules=, ProtectControlGroups=,
-# and MountFlags= (all of which either create a mount ns or rely on one).
+# ProtectSystem=, ProtectHome=, PrivateTmp=, PrivateDevices=,
+# ReadWritePaths=, ProtectKernelTunables=, ProtectKernelModules=,
+# ProtectKernelLogs=, ProtectClock=, ProtectControlGroups=, and
+# MountFlags= (all of which either create a mount ns or rely on one).
 #
 # What remains — cheap defense in depth via seccomp and prctl:
 NoNewPrivileges=true
@@ -28,6 +34,22 @@ RestrictSUIDSGID=true
 RestrictRealtime=true
 RestrictNamespaces=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Only a new UTS namespace (hostname stays read-only); no mount ns.
+ProtectHostname=yes
+# Everything airlockd spawns (mount, mkfs.*, fsck.*, ntfs-3g, xz,
+# sgdisk, udevadm, smbcontrol) is plain AOT code — no JIT — so W^X
+# holds for children too. Inherited by every child process.
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# None of these are needed by the daemon or its children. Filesystem
+# modules are still auto-loaded: the kernel's request_module() runs
+# modprobe from its own context, not ours. EPERM instead of SIGSYS so
+# a surprise shows up as an error in the journal, not a dead process.
+SystemCallFilter=~@clock @cpu-emulation @debug @module @obsolete @reboot @swap
+SystemCallErrorNumber=EPERM
+# Root, but without the capabilities a block-device/SMB appliance has
+# no business holding. CAP_SYS_ADMIN (mount) and CAP_SYS_RAWIO stay.
+CapabilityBoundingSet=~CAP_SYS_MODULE CAP_SYS_BOOT CAP_SYS_TIME CAP_SYS_PTRACE CAP_NET_ADMIN CAP_NET_RAW CAP_BPF CAP_PERFMON CAP_SYSLOG
 
 [Install]
 WantedBy=multi-user.target

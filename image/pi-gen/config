@@ -1,11 +1,13 @@
 # pi-gen config for the Airlock image.
-# Referenced by image/pi-gen/build.sh.
+# Referenced by image/pi-gen/build.sh (built against pi-gen's arm64
+# branch — see PIGEN_REF there).
 
 IMG_NAME="airlock"
 RELEASE="trixie"
 DEPLOY_COMPRESSION="xz"
 
-# arm64 for Pi 4 / Pi 5.
+# arm64 for the Raspberry Pi 4. (Pi 5 boots the same image but is
+# untested; its header GPIO lives on a different gpiochip.)
 PI_GEN_RELEASE="Airlock $(date +%Y.%m.%d)"
 ARCH="arm64"
 
@@ -18,18 +20,27 @@ TIMEZONE_DEFAULT="Etc/UTC"
 # Networking / identity.
 TARGET_HOSTNAME="airlock"
 
-# Default local user is airlock/airlock.
+# Default local user is airlock/airlock (UID 1000 — the Samba share
+# owner). The password only works on the local console:
 #
-# WEAK DEFAULT — users MUST change it on first boot with `passwd`,
-# or set their own credentials via Pi Imager's OS customization dialog
-# (which rewrites firstrun.sh on the boot partition before flashing).
-# SSH is enabled and accepts passwords; we can't ship a baked-in public
-# key that would work for everyone, and disabling SSH entirely would
-# lock out users who don't run Pi Imager.
+#   - SSH is enabled but key-only (see 07-ssh-host-keys). Set your public
+#     key — and optionally a new user / password, Wi-Fi, hostname — with
+#     Raspberry Pi Imager's OS customisation. On trixie that goes through
+#     cloud-init (user-data on the boot partition), which is left enabled
+#     for exactly this reason. Choosing "password authentication" in
+#     Imager turns password SSH back on.
+#   - The root is a tmpfs overlay: `passwd` on a running system is lost
+#     at reboot. Make persistent changes with `sudo overlayroot-chroot`
+#     (or edit user-data on the boot partition — cloud-init re-applies
+#     it on every boot). See docs/install.md.
 FIRST_USER_NAME="airlock"
 FIRST_USER_PASS="airlock"
 DISABLE_FIRST_BOOT_USER_RENAME=1
 ENABLE_SSH=1
+# Password SSH is disabled by stage-airlock/07-ssh-host-keys (an sshd
+# drop-in), not PUBKEY_ONLY_SSH: pi-gen refuses that option unless a
+# key is baked into the image via PUBKEY_SSH_FIRST_USER.
 
-# Only build lite + our stage. No desktop.
+# Only build lite + our stage. No desktop. build.sh drops
+# stage2/SKIP_IMAGES so only the airlock image is exported.
 STAGE_LIST="stage0 stage1 stage2 stage-airlock"

@@ -11,7 +11,8 @@ install -D -m 0644 /dev/null \
 
 on_chroot << EOF
 systemctl enable smbd.service
-# nmbd (NetBIOS) is not needed for SMB2/3 discovery on modern clients; disable it.
+# nmbd (NetBIOS) is off in smb.conf (disable netbios = yes, SMB3 on 445
+# only; discovery is mDNS). Mask it so nothing starts it anyway.
 systemctl disable nmbd.service || true
 systemctl mask nmbd.service || true
 EOF

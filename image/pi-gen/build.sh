@@ -2,32 +2,49 @@
 #
 # Build the Airlock image using upstream pi-gen.
 #
-# Requirements (Linux host):
+# Requirements (Linux host, or macOS with Docker Desktop):
 #   - docker (pi-gen builds inside a container)
-#   - git
+#   - git, go (to cross-compile airlockd)
+#   - on an x86_64 host: qemu-user-binfmt (pi-gen checks for qemu-aarch64)
 #
 # Usage:
 #   ./image/pi-gen/build.sh
 #
-# Output: pi-gen/deploy/<IMG_NAME>.img.xz
+# Output: image/pi-gen/.pi-gen/deploy/image_<date>-airlock.img.xz
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_DIR="${REPO_ROOT}/image/pi-gen"
 PIGEN_DIR="${IMAGE_DIR}/.pi-gen"
-PIGEN_REF="${PIGEN_REF:-master}"   # master supports arm64 via ARCH= in config
+# pi-gen's `master` branch builds 32-bit (armhf) images regardless of
+# ARCH= in config; 64-bit images come from the `arm64` branch. Pin to a
+# release tag on that branch so builds are reproducible — bump it when
+# Raspberry Pi publishes a new trixie arm64 release.
+PIGEN_REF="${PIGEN_REF:-2026-09-15-raspios-trixie-arm64}"
 
+# Marker recording which ref the checkout is on, so bumping PIGEN_REF
+# (or overriding it) moves an existing .pi-gen clone instead of silently
+# building from the old one.
+PIGEN_MARKER="${PIGEN_DIR}/.airlock-pigen-ref"
 if [ ! -d "${PIGEN_DIR}" ]; then
     echo ">>> Cloning pi-gen (${PIGEN_REF}) into ${PIGEN_DIR}"
     git clone --depth 1 --branch "${PIGEN_REF}" https://github.com/RPi-Distro/pi-gen "${PIGEN_DIR}"
+    echo "${PIGEN_REF}" > "${PIGEN_MARKER}"
+elif [ "$(cat "${PIGEN_MARKER}" 2>/dev/null)" != "${PIGEN_REF}" ]; then
+    echo ">>> Moving pi-gen checkout to ${PIGEN_REF}"
+    git -C "${PIGEN_DIR}" fetch --depth 1 origin "${PIGEN_REF}"
+    git -C "${PIGEN_DIR}" checkout -q --force FETCH_HEAD
+    echo "${PIGEN_REF}" > "${PIGEN_MARKER}"
 fi
 
-# Ensure the airlockd arm64 binary exists — the stage copies it in.
-if [ ! -f "${REPO_ROOT}/bin/airlockd.arm64" ]; then
-    echo ">>> Building airlockd (arm64)"
-    (cd "${REPO_ROOT}" && make airlockd-arm64)
-fi
+# Always rebuild the airlockd arm64 binary — the stage copies it in, and
+# a stale bin/airlockd.arm64 from an earlier checkout would silently
+# ship old code. `go build` is incremental, so this is cheap. Set
+# VERSION=<tag> to stamp a release version (the Makefile default is
+# `git describe`).
+echo ">>> Building airlockd (arm64)"
+(cd "${REPO_ROOT}" && make airlockd-arm64)
 
 # Copy our stage into pi-gen's tree. pi-gen expects stages at its top level.
 STAGE_SRC="${IMAGE_DIR}/stage-airlock"
@@ -51,20 +68,15 @@ cp "${IMAGE_DIR}/config" "${PIGEN_DIR}/config"
 for s in stage3 stage4 stage5; do
     touch "${PIGEN_DIR}/${s}/SKIP" "${PIGEN_DIR}/${s}/SKIP_IMAGES"
 done
+# stage2 still has to run (stage-airlock builds on its rootfs), but it
+# carries its own EXPORT_IMAGE — without SKIP_IMAGES pi-gen would also
+# export a plain `-lite` image next to ours.
+touch "${PIGEN_DIR}/stage2/SKIP_IMAGES"
 
 # Build. Remove any leftover work container from a previous failed run —
 # pi-gen refuses to start if `pigen_work` already exists and we didn't
 # ask it to CONTINUE. Ignore errors; the common case is "no such container".
 docker rm -v pigen_work >/dev/null 2>&1 || true
-
-# On arm64 hosts (Apple Silicon, arm64 Linux) pi-gen's `setarch linux32`
-# in stage0 fails — the arm64 kernel can't set the 32-bit personality
-# needed. Force the pi-gen container to run as amd64, which Docker
-# emulates via QEMU on Apple Silicon. Slower but reliably functional.
-if [ "$(uname -m)" = "arm64" ] || [ "$(uname -m)" = "aarch64" ]; then
-    export DOCKER_DEFAULT_PLATFORM=linux/amd64
-    echo ">>> arm64 host detected — forcing pigen container to linux/amd64"
-fi
 
 cd "${PIGEN_DIR}"
 echo ">>> Running pi-gen build (this takes ~30 minutes)"

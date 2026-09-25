@@ -3,13 +3,23 @@
 #
 # Usage:
 #   curl -fsSL https://github.com/emdzej/airlock/releases/latest/download/install.sh | sudo bash
-#   or
+#   curl -fsSL …/install.sh | sudo AIRLOCK_FAST_BOOT=1 bash    # with options
+#   or, from an extracted airlock-<version>-bundle.tar.gz (offline):
 #   sudo ./install.sh
 #
+# Every config file (systemd unit, udev rule, Samba, Avahi, modprobe
+# blocklist) comes from the release bundle — the same files the pi-gen
+# image is built from (image/pi-gen/stage-airlock/**/files). When run
+# from an extracted bundle the local copies are used; when piped from
+# curl the bundle is downloaded and checked against its published
+# .sha256. Run from a repo checkout (scripts/install.sh), the files are
+# taken straight from image/pi-gen/stage-airlock.
+#
 # Environment overrides:
-#   AIRLOCK_VERSION       git tag to install (default: latest release)
+#   AIRLOCK_VERSION       release tag to install (default: latest release)
 #   AIRLOCK_REPO          GitHub repo (default: emdzej/airlock)
 #   AIRLOCK_BINARY_URL    override the binary tarball URL entirely
+#                         (checked against <url>.sha256 if one exists)
 #   AIRLOCK_LOCAL_BINARY  path to a locally-built binary (skips download)
 #   AIRLOCK_PREFIX        install prefix (default: /usr/local)
 #   AIRLOCK_HARDEN_USB    set to 1 to block HID / CDC-* USB drivers (opt-in)
@@ -19,6 +29,9 @@
 #                         (only if this Pi uses Ethernet — otherwise it
 #                         will become unreachable after reboot)
 #
+# Note: `sudo` drops the caller's environment, so pass variables after
+# it — `… | sudo AIRLOCK_X=1 bash`, not `AIRLOCK_X=1 … | sudo bash`.
+#
 # The script is idempotent — safe to re-run to upgrade or repair an install.
 
 set -euo pipefail
@@ -26,6 +39,7 @@ set -euo pipefail
 REPO="${AIRLOCK_REPO:-emdzej/airlock}"
 VERSION="${AIRLOCK_VERSION:-}"
 PREFIX="${AIRLOCK_PREFIX:-/usr/local}"
+BINARY_URL="${AIRLOCK_BINARY_URL:-}"
 LOCAL_BINARY="${AIRLOCK_LOCAL_BINARY:-}"
 HARDEN_USB="${AIRLOCK_HARDEN_USB:-0}"
 FAST_BOOT="${AIRLOCK_FAST_BOOT:-0}"
@@ -49,7 +63,7 @@ if [[ -f /etc/os-release ]]; then
     . /etc/os-release
     case "${ID:-}${ID_LIKE:-}" in
         *debian*) ;;
-        *) warn "not a Debian-based system (ID=$ID) — proceeding, but nothing is guaranteed" ;;
+        *) warn "not a Debian-based system (ID=${ID:-unknown}) — proceeding, but nothing is guaranteed" ;;
     esac
 fi
 
@@ -59,25 +73,87 @@ case "$ARCH" in
     *) err "only arm64 / aarch64 is supported; got $ARCH" ;;
 esac
 
-# The Samba share owner must exist as a Unix user whose UID matches the mount
-# options the daemon uses (1000). On a fresh Raspberry Pi OS install this is
-# whatever first-user was set via Pi Imager.
+# The Samba share owner must exist as a Unix user with UID 1000 — the
+# daemon's mount options and `force user` use that fixed UID. On a fresh
+# Raspberry Pi OS install this is the first user set via Pi Imager.
 SHARE_USER="$(getent passwd 1000 | cut -d: -f1 || true)"
-[[ -n "$SHARE_USER" ]] || err "no user found with UID 1000. Create one first, or set AIRLOCK_OWNER_UID."
+[[ -n "$SHARE_USER" ]] || err "no user found with UID 1000. Create one first (e.g. sudo adduser --uid 1000 airlock)."
 log "share owner: ${_bold}$SHARE_USER${_reset} (uid 1000)"
 
-# --- resolve version ---
-if [[ -z "$VERSION" && -z "$LOCAL_BINARY" ]]; then
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# --- helpers ---
+resolve_version() {
+    [[ -n "$VERSION" ]] && return 0
     log "fetching latest release tag from github.com/$REPO"
     VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
         | grep '"tag_name"' | head -1 | sed 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/')" || true
     [[ -n "$VERSION" ]] || err "could not determine latest version; set AIRLOCK_VERSION manually"
+}
+
+# fetch_verified URL DEST [optional]
+# Downloads URL to DEST and checks it against the hash in URL.sha256.
+# With "optional", a missing .sha256 is a warning instead of an error.
+fetch_verified() {
+    local url="$1" dest="$2" optional="${3:-}" expected actual
+    log "downloading $url"
+    curl -fsSL "$url" -o "$dest" || err "download failed: $url"
+    if ! curl -fsSL "$url.sha256" -o "$dest.sha256"; then
+        [[ "$optional" == "optional" ]] || err "no checksum published at $url.sha256 — refusing to install unverified download (releases before 0.4.0 don't publish one for the bundle; install those with their own install.sh)"
+        warn "no checksum at $url.sha256 — skipping verification"
+        return 0
+    fi
+    # Compare the hash only; the filename column is informational.
+    expected="$(awk '{print $1; exit}' "$dest.sha256")"
+    actual="$(sha256sum "$dest" | awk '{print $1}')"
+    [[ -n "$expected" && "$expected" == "$actual" ]] \
+        || err "checksum mismatch for $url (expected ${expected:-none}, got $actual)"
+    log "sha256 OK: $actual"
+}
+
+# --- locate the config files (bundle layout) ---
+# BUNDLE ends up pointing at a directory laid out like the release bundle:
+#   airlockd (optional here), modprobe-airlock.conf,
+#   etc/systemd/system/airlockd.service, etc/samba/smb.conf,
+#   etc/avahi/services/airlock.service, etc/udev/rules.d/99-airlock.rules
+#
+# BASH_SOURCE is empty when the script arrives on stdin (curl | bash), so
+# only trust it when it names a real file.
+SELF="${BASH_SOURCE[0]:-}"
+SRC_DIR=""
+if [[ -n "$SELF" && -f "$SELF" ]]; then
+    SRC_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 fi
-if [[ -n "$LOCAL_BINARY" ]]; then
-    log "using local binary: $LOCAL_BINARY"
+
+BUNDLE=""
+if [[ -n "$SRC_DIR" && -f "$SRC_DIR/etc/samba/smb.conf" ]]; then
+    BUNDLE="$SRC_DIR"
+    log "using config files from local bundle: $BUNDLE"
+elif [[ -n "$SRC_DIR" && -d "$SRC_DIR/../image/pi-gen/stage-airlock" ]]; then
+    # Repo checkout: assemble the bundle layout from the pi-gen stage,
+    # exactly like the release workflow does.
+    STAGE="$SRC_DIR/../image/pi-gen/stage-airlock"
+    BUNDLE="$TMP/bundle"
+    install -D -m 0644 "$STAGE/01-airlockd/files/etc/systemd/system/airlockd.service" "$BUNDLE/etc/systemd/system/airlockd.service"
+    install -D -m 0644 "$STAGE/02-samba/files/etc/samba/smb.conf"                     "$BUNDLE/etc/samba/smb.conf"
+    install -D -m 0644 "$STAGE/03-avahi/files/etc/avahi/services/airlock.service"     "$BUNDLE/etc/avahi/services/airlock.service"
+    install -D -m 0644 "$STAGE/04-udev/files/etc/udev/rules.d/99-airlock.rules"       "$BUNDLE/etc/udev/rules.d/99-airlock.rules"
+    install -D -m 0644 "$SRC_DIR/modprobe-airlock.conf"                               "$BUNDLE/modprobe-airlock.conf"
+    log "using config files from repo checkout: $(cd "$STAGE" && pwd)"
 else
+    resolve_version
     log "installing version: ${_bold}$VERSION${_reset}"
+    NAME="airlock-${VERSION}-bundle.tar.gz"
+    fetch_verified "https://github.com/$REPO/releases/download/$VERSION/$NAME" "$TMP/$NAME"
+    tar -xzf "$TMP/$NAME" -C "$TMP"
+    BUNDLE="$TMP/airlock-${VERSION}"
 fi
+for f in etc/systemd/system/airlockd.service etc/samba/smb.conf \
+         etc/avahi/services/airlock.service etc/udev/rules.d/99-airlock.rules \
+         modprobe-airlock.conf; do
+    [[ -f "$BUNDLE/$f" ]] || err "bundle is missing $f"
+done
 
 # --- install apt packages ---
 log "installing prerequisite packages"
@@ -92,17 +168,24 @@ apt-get install -y --no-install-recommends \
     ca-certificates curl
 
 # --- get the binary ---
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
+# Precedence: AIRLOCK_LOCAL_BINARY > AIRLOCK_BINARY_URL > the bundle's
+# airlockd > the release tarball (repo checkout without a local binary).
 if [[ -n "$LOCAL_BINARY" ]]; then
+    log "using local binary: $LOCAL_BINARY"
     [[ -x "$LOCAL_BINARY" ]] || err "$LOCAL_BINARY is not executable"
     cp "$LOCAL_BINARY" "$TMP/airlockd"
-else
-    URL="${AIRLOCK_BINARY_URL:-https://github.com/$REPO/releases/download/$VERSION/airlockd-${VERSION}-linux-arm64.tar.gz}"
-    log "downloading $URL"
-    curl -fsSL "$URL" -o "$TMP/airlockd.tar.gz"
+elif [[ -n "$BINARY_URL" || ! -f "$BUNDLE/airlockd" ]]; then
+    if [[ -n "$BINARY_URL" ]]; then
+        fetch_verified "$BINARY_URL" "$TMP/airlockd.tar.gz" optional
+    else
+        resolve_version
+        log "installing version: ${_bold}$VERSION${_reset}"
+        fetch_verified "https://github.com/$REPO/releases/download/$VERSION/airlockd-${VERSION}-linux-arm64.tar.gz" \
+            "$TMP/airlockd.tar.gz"
+    fi
     tar -xzf "$TMP/airlockd.tar.gz" -C "$TMP" airlockd
+else
+    cp "$BUNDLE/airlockd" "$TMP/airlockd"
 fi
 [[ -x "$TMP/airlockd" ]] || err "airlockd binary is missing or not executable"
 
@@ -111,42 +194,15 @@ log "installing binary to $PREFIX/bin/airlockd"
 install -D -m 0755 "$TMP/airlockd" "$PREFIX/bin/airlockd"
 
 # --- systemd unit ---
+# The shipped unit points at /usr/local/bin; follow AIRLOCK_PREFIX.
 log "installing systemd unit (with sandbox)"
-cat > /etc/systemd/system/airlockd.service <<'UNIT'
-[Unit]
-Description=Airlock daemon
-Documentation=https://github.com/emdzej/airlock
-After=network-online.target smbd.service avahi-daemon.service
-Wants=network-online.target smbd.service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/airlockd
-Restart=on-failure
-RestartSec=3
-User=root
-StandardOutput=journal
-StandardError=journal
-
-# systemd sandbox (seccomp + prctl only — no mount ns).
-NoNewPrivileges=true
-LockPersonality=true
-RestrictSUIDSGID=true
-RestrictRealtime=true
-RestrictNamespaces=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-
-[Install]
-WantedBy=multi-user.target
-UNIT
+sed "s|^ExecStart=/usr/local/bin/airlockd|ExecStart=${PREFIX}/bin/airlockd|" \
+    "$BUNDLE/etc/systemd/system/airlockd.service" > "$TMP/airlockd.service"
+install -D -m 0644 "$TMP/airlockd.service" /etc/systemd/system/airlockd.service
 
 # --- udev rule ---
 log "installing udev rule"
-cat > /etc/udev/rules.d/99-airlock.rules <<'UDEV'
-# airlock — match only USB-attached block devices. Native SD (mmcblk*) is
-# explicitly excluded so we never expose /boot/firmware or / over SMB.
-SUBSYSTEM=="block", KERNEL=="sd[a-z]*", ENV{ID_BUS}=="usb", ENV{AIRLOCK_MANAGED}="1"
-UDEV
+install -D -m 0644 "$BUNDLE/etc/udev/rules.d/99-airlock.rules" /etc/udev/rules.d/99-airlock.rules
 
 # --- Samba base config ---
 if [[ -f /etc/samba/smb.conf && ! -f /etc/samba/smb.conf.airlock-backup ]]; then
@@ -155,59 +211,16 @@ if [[ -f /etc/samba/smb.conf && ! -f /etc/samba/smb.conf.airlock-backup ]]; then
 fi
 
 log "installing samba base config"
-cat > /etc/samba/smb.conf <<'SMB'
-[global]
-    workgroup = WORKGROUP
-    server string = Airlock
-    server role = standalone server
-    netbios name = airlock
-    map to guest = Bad User
-    guest account = nobody
-    security = user
-    server min protocol = SMB2
-    client min protocol = SMB2
-    # Don't let Samba publish its own mDNS — it ships a competing
-    # _device-info._tcp record under the NetBIOS name that shadows
-    # what our Avahi service advertises.
-    multicast dns register = no
-    load printers = no
-    printing = bsd
-    printcap name = /dev/null
-    disable spoolss = yes
-    log level = 1
-    max log size = 1000
-    log file = /var/log/samba/log.%m
-    include = /etc/samba/smb.conf.d/airlock.conf
-SMB
+install -D -m 0644 "$BUNDLE/etc/samba/smb.conf" /etc/samba/smb.conf
 
+# Dynamic share include — owned by airlockd, never overwritten here.
 mkdir -p /etc/samba/smb.conf.d
 touch /etc/samba/smb.conf.d/airlock.conf
 chmod 0644 /etc/samba/smb.conf.d/airlock.conf
 
 # --- Avahi service ---
 log "installing avahi service advertisement"
-mkdir -p /etc/avahi/services
-cat > /etc/avahi/services/airlock.service <<'AVAHI'
-<?xml version="1.0" standalone='no'?>
-<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
-<service-group>
-  <name replace-wildcards="yes">Airlock on %h</name>
-  <service>
-    <type>_smb._tcp</type>
-    <port>445</port>
-  </service>
-  <service>
-    <type>_http._tcp</type>
-    <port>80</port>
-  </service>
-  <!-- Tells macOS Finder to render this as a disk / Time Capsule -->
-  <service>
-    <type>_device-info._tcp</type>
-    <port>0</port>
-    <txt-record>model=TimeCapsule6,106</txt-record>
-  </service>
-</service-group>
-AVAHI
+install -D -m 0644 "$BUNDLE/etc/avahi/services/airlock.service" /etc/avahi/services/airlock.service
 
 # --- Mount base dir ---
 mkdir -p /mnt/airlock
@@ -233,7 +246,9 @@ if [[ "$FAST_BOOT" == "1" ]]; then
         systemctl mask "$svc" >/dev/null 2>&1 || true
     done
     # Cloud-init has done its first-boot job by the time you're running
-    # this installer. Turn it off so it stops adding ~2 s to every boot.
+    # this installer on a writable root. Turn it off so it stops adding
+    # ~2 s to every boot. (The pi-gen image keeps it: there it's how Pi
+    # Imager's settings get applied.)
     if [ -d /etc/cloud ]; then
         touch /etc/cloud/cloud-init.disabled
         for svc in cloud-init-main.service cloud-init-local.service \
@@ -277,16 +292,7 @@ fi
 # storage is unaffected. Skip if you still want to plug a keyboard in.
 if [[ "$HARDEN_USB" == "1" ]]; then
     log "installing USB class blocklist (opt-in, AIRLOCK_HARDEN_USB=1)"
-    SRC_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-    if [[ -f "$SRC_DIR/modprobe-airlock.conf" ]]; then
-        install -D -m 0644 "$SRC_DIR/modprobe-airlock.conf" \
-            /etc/modprobe.d/modprobe-airlock.conf
-    else
-        # Curl-piped install: no local script dir — download from repo.
-        curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/modprobe-airlock.conf" \
-            -o /etc/modprobe.d/modprobe-airlock.conf
-        chmod 0644 /etc/modprobe.d/modprobe-airlock.conf
-    fi
+    install -D -m 0644 "$BUNDLE/modprobe-airlock.conf" /etc/modprobe.d/modprobe-airlock.conf
     systemctl restart systemd-udevd || true
     warn "USB HID + CDC drivers now blocked. Reboot to apply fully."
 else

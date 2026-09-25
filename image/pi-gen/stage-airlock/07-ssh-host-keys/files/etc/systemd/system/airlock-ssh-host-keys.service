@@ -1,0 +1,18 @@
+[Unit]
+Description=Airlock: restore / persist SSH host keys on the boot partition
+Documentation=https://github.com/emdzej/airlock
+# The stock key generators run on every boot under the tmpfs overlay
+# (/etc/machine-id never persists, so every boot is a "first boot", and
+# cloud-init sees a new instance). Run after all of them, before sshd.
+After=regenerate_ssh_host_keys.service sshd-keygen.service cloud-init-network.service
+Before=ssh.service
+RequiresMountsFor=/boot/firmware
+ConditionFileIsExecutable=/usr/bin/ssh-keygen
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/airlock-ssh-host-keys
+
+[Install]
+WantedBy=multi-user.target

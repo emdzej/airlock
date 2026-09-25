@@ -1,9 +1,9 @@
 #!/bin/bash -e
 #
 # Bake the fast-boot service disables + BT firmware skip into the image.
-# Mirrors what `AIRLOCK_FAST_BOOT=1 ./install.sh` does on a running Pi,
-# but applied at image-build time so a fresh flash boots in ~14 s
-# instead of ~24 s.
+# Mirrors what `AIRLOCK_FAST_BOOT=1 ./install.sh` does on a running Pi
+# (minus the cloud-init disable, see below), but applied at image-build
+# time so a fresh flash boots in well under the stock ~24 s.
 #
 # Wi-Fi is left ENABLED here — the image needs to be flashable on
 # Wi-Fi-only setups. Users on Ethernet can add `dtoverlay=disable-wifi`
@@ -30,19 +30,22 @@ done
 for svc in keyboard-setup.service console-setup.service; do
     systemctl mask "$svc" >/dev/null 2>&1 || true
 done
-
-# pi-gen doesn't include cloud-init, but if a downstream stage adds it
-# later, this marker prevents it from running on every boot.
-if [ -d /etc/cloud ]; then
-    touch /etc/cloud/cloud-init.disabled
-fi
 EOF
+
+# cloud-init is deliberately left ENABLED (unlike `AIRLOCK_FAST_BOOT=1`
+# in install.sh, which runs on an already-provisioned Pi). On trixie,
+# Raspberry Pi Imager's OS customisation — user, password, SSH key,
+# Wi-Fi, hostname — is delivered as cloud-init user-data on the boot
+# partition. With the tmpfs overlay root it re-applies on every boot,
+# which is what keeps those settings in place. That costs ~2 s of boot.
 
 # Firmware overlay to skip Bluetooth radio init (~1 s off kernel time).
 # Path is /boot/firmware/config.txt on Bookworm+ pi-gen builds.
 CONFIG_TXT="${ROOTFS_DIR}/boot/firmware/config.txt"
 if [ -f "$CONFIG_TXT" ] && ! grep -q "^dtoverlay=disable-bt" "$CONFIG_TXT"; then
-    echo "" >> "$CONFIG_TXT"
-    echo "# airlock: skip Bluetooth radio init at boot (from stage-airlock/06-fast-boot)" >> "$CONFIG_TXT"
-    echo "dtoverlay=disable-bt" >> "$CONFIG_TXT"
+    {
+        echo ""
+        echo "# airlock: skip Bluetooth radio init at boot (from stage-airlock/06-fast-boot)"
+        echo "dtoverlay=disable-bt"
+    } >> "$CONFIG_TXT"
 fi
