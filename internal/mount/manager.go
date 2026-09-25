@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/emdzej/airlock/internal/devices"
 )
 
 // DefaultBaseDir is where per-drive mount points are created.
@@ -28,16 +31,16 @@ const (
 // SupportedFilesystems lists filesystems airlockd will mount. Others are
 // ignored (logged, not mounted).
 var SupportedFilesystems = map[string]bool{
-	"vfat":     true,
-	"exfat":    true,
-	"ntfs":     true, // kernel ntfs3 driver on 5.15+
-	"ntfs3":    true,
-	"ext2":     true,
-	"ext3":     true,
-	"ext4":     true,
-	"hfsplus":  true, // mounted read-only regardless of the journal state
-	"iso9660":  true,
-	"udf":      true,
+	"vfat":    true,
+	"exfat":   true,
+	"ntfs":    true, // kernel ntfs3 driver on 5.15+
+	"ntfs3":   true,
+	"ext2":    true,
+	"ext3":    true,
+	"ext4":    true,
+	"hfsplus": true, // mounted read-only regardless of the journal state
+	"iso9660": true,
+	"udf":     true,
 }
 
 // Drive is one mounted filesystem on the appliance.
@@ -52,6 +55,9 @@ type Drive struct {
 	MountPoint string // "/mnt/airlock/kingston"
 	ShareName  string // last path component of MountPoint — used by Samba
 	SizeBytes  int64  // 0 if unknown
+	Ejecting   bool   // unmount in progress: share withdrawn from Samba
+
+	removed bool // device vanished (udev remove) while an eject was retrying
 }
 
 // Snapshot is a point-in-time list of mounted drives.
@@ -59,9 +65,14 @@ type Snapshot struct {
 	Drives []Drive
 }
 
-// Listener is invoked on the caller's goroutine whenever the set of mounted
-// drives changes. Called with the mutex released.
+// Listener is invoked whenever the set of mounted drives changes. Calls are
+// serialized and always carry the latest state, so listeners never see an
+// older snapshot after a newer one.
 type Listener func(Snapshot)
+
+// UnmountHook runs just before a drive is unmounted. main wires it to
+// `smbcontrol close-share` so Samba releases its file handles first.
+type UnmountHook func(Drive)
 
 // Manager owns the set of currently-mounted airlock drives and drives the
 // mount/unmount lifecycle in response to udev events.
@@ -70,10 +81,20 @@ type Manager struct {
 	listener  Listener
 	listeners []Listener
 
-	mu         sync.Mutex
-	drives     map[string]*Drive // key: kernel name
-	quarantine map[string]bool   // parent kernel names to ignore events for
+	beforeUnmount UnmountHook
+
+	mu       sync.Mutex
+	cond     *sync.Cond        // signalled when inflight drops
+	drives   map[string]*Drive // key: kernel name
+	ops      map[string]string // disk kernel name → running operation
+	inflight map[string]int    // disk kernel name → mounts in progress
+
+	notifyMu sync.Mutex // serializes listener calls
 }
+
+// ErrBusy is returned when a device already has an operation running, or
+// when a filesystem can't be unmounted because something still holds it.
+var ErrBusy = errors.New("device busy")
 
 // AddListener registers an additional callback fired after each mount
 // state change. Complements the primary Listener passed to NewManager
@@ -94,39 +115,71 @@ func NewManager(baseDir string, listener Listener) (*Manager, error) {
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir base dir: %w", err)
 	}
-	return &Manager{
-		baseDir:    baseDir,
-		listener:   listener,
-		drives:     make(map[string]*Drive),
-		quarantine: make(map[string]bool),
+	m := &Manager{
+		baseDir:  baseDir,
+		listener: listener,
+		drives:   make(map[string]*Drive),
+		ops:      make(map[string]string),
+		inflight: make(map[string]int),
+	}
+	m.cond = sync.NewCond(&m.mu)
+	return m, nil
+}
+
+// SetUnmountHook installs a callback run before every unmount.
+func (m *Manager) SetUnmountHook(h UnmountHook) {
+	m.mu.Lock()
+	m.beforeUnmount = h
+	m.mu.Unlock()
+}
+
+// BeginOp claims exclusive use of a whole disk (e.g. "sdb") for a
+// long-running operation (format, flash, fsck, relabel, dump). While held,
+// the disk is quarantined: udev events for it and its partitions are
+// ignored, so the daemon doesn't race to auto-mount a fresh partition
+// mid-mkfs. A second BeginOp on the same disk fails with ErrBusy.
+//
+// BeginOp waits for any mount of the disk that was already in progress, so
+// a following Eject is guaranteed to see it. The returned release function
+// lifts the quarantine; it is idempotent, so callers can release early
+// (before a final udev re-trigger) and still defer it.
+func (m *Manager) BeginOp(disk, op string) (release func(), err error) {
+	m.mu.Lock()
+	if cur, busy := m.ops[disk]; busy {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("%w: %s in progress on %s", ErrBusy, cur, disk)
+	}
+	m.ops[disk] = op
+	for m.inflight[disk] > 0 {
+		m.cond.Wait()
+	}
+	m.mu.Unlock()
+	slog.Info("device quarantined", "disk", disk, "op", op)
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			delete(m.ops, disk)
+			m.mu.Unlock()
+			slog.Info("device unquarantined", "disk", disk, "op", op)
+		})
 	}, nil
 }
 
-// Quarantine marks a whole-disk kernel name (e.g. "sdb") as off-limits: the
-// event handler will skip both the parent and any of its partitions until
-// Unquarantine is called. Used during format so the daemon does not race to
-// auto-mount the fresh partition before mkfs runs on it.
-func (m *Manager) Quarantine(parent string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.quarantine[parent] = true
-	slog.Info("device quarantined", "parent", parent)
-}
-
-// Unquarantine releases a Quarantine hold. Idempotent.
-func (m *Manager) Unquarantine(parent string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.quarantine, parent)
-	slog.Info("device unquarantined", "parent", parent)
-}
-
 // isQuarantinedLocked must be called with m.mu held.
-func (m *Manager) isQuarantinedLocked(parent, kernel string) bool {
-	if parent != "" && m.quarantine[parent] {
-		return true
-	}
-	return m.quarantine[kernel]
+func (m *Manager) isQuarantinedLocked(disk string) bool {
+	_, busy := m.ops[disk]
+	return busy
+}
+
+// IsMounted reports whether airlock currently owns a mount for the given
+// kernel name.
+func (m *Manager) IsMounted(kernel string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.drives[kernel]
+	return ok
 }
 
 // Recover cleans up any leftover mount points under baseDir from a previous
@@ -220,7 +273,9 @@ func (m *Manager) handle(ev UEvent) {
 			slog.Error("mount failed", "dev", ev.DevNode(), "err", err)
 		}
 	case ActionRemove:
-		if err := m.unmount(ev.KernelName); err != nil && !errors.Is(err, errNotMounted) {
+		// The device is already gone, so there's nothing left to protect:
+		// allow a lazy unmount to release the mount table.
+		if err := m.unmount(ev.KernelName, true); err != nil && !errors.Is(err, ErrNotMounted) {
 			slog.Error("unmount failed", "kernel", ev.KernelName, "err", err)
 		}
 	}
@@ -230,13 +285,25 @@ func (m *Manager) handle(ev UEvent) {
 // not currently mounted under airlock's tree.
 var ErrNotMounted = errors.New("device not mounted by airlock")
 
-// keep the old name for existing internal callers
-var errNotMounted = ErrNotMounted
-
 func (m *Manager) mount(ev UEvent) error {
-	parent := parentKernel(ev.DevPath, ev.KernelName)
+	parent := parentKernel(ev.KernelName)
 	devNode := ev.DevNode()
+	disk := parent
+	if disk == "" {
+		disk = ev.KernelName
+	}
 
+	// Never touch a disk the running system depends on (a USB-booted Pi's
+	// root disk may carry extra, unmounted partitions).
+	if devices.SystemDisks()[disk] {
+		slog.Info("skipping — disk backs the running system", "dev", devNode, "disk", disk)
+		return nil
+	}
+
+	// Our own mount generates a follow-up change event; ignore it quietly.
+	if m.IsMounted(ev.KernelName) {
+		return nil
+	}
 	// Belt-and-suspenders: never mount a block device that is already visible
 	// to the kernel at some other mount point. This is the guard against
 	// re-mounting the Pi's own boot media if the udev rule ever misfires,
@@ -253,7 +320,7 @@ func (m *Manager) mount(ev UEvent) error {
 		return nil
 	}
 	// Skip devices under quarantine (e.g. mid-format).
-	if m.isQuarantinedLocked(parent, ev.KernelName) {
+	if m.isQuarantinedLocked(disk) {
 		m.mu.Unlock()
 		slog.Info("skipping — device is quarantined",
 			"dev", devNode, "kernel", ev.KernelName, "parent", parent)
@@ -271,7 +338,18 @@ func (m *Manager) mount(ev UEvent) error {
 			return nil
 		}
 	}
+	// Register the in-flight mount so a concurrent BeginOp waits for it to
+	// land in m.drives (and thus be ejected) before touching the disk.
+	m.inflight[disk]++
 	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		if m.inflight[disk]--; m.inflight[disk] <= 0 {
+			delete(m.inflight, disk)
+		}
+		m.cond.Broadcast()
+		m.mu.Unlock()
+	}()
 
 	fs := normalizeFS(ev.Env["ID_FS_TYPE"])
 	label := ev.Env["ID_FS_LABEL"]
@@ -304,44 +382,113 @@ func (m *Manager) mount(ev UEvent) error {
 		ReadOnly:   readOnly,
 		MountPoint: mp,
 		ShareName:  name,
-		SizeBytes:  deviceSize(ev.KernelName),
+		SizeBytes:  DeviceSize(ev.KernelName),
 	}
 
 	m.mu.Lock()
 	m.drives[ev.KernelName] = d
-	snap := m.snapshotLocked()
 	m.mu.Unlock()
 
-	m.notify(snap)
+	m.notify()
 	return nil
 }
 
-func (m *Manager) unmount(kernel string) error {
+// unmountRetries × unmountDelay bounds how long we wait for a filesystem
+// to become idle (e.g. smbd releasing handles after close-share).
+const (
+	unmountRetries = 10
+	unmountDelay   = 300 * time.Millisecond
+)
+
+// unmount releases the airlock mount for kernel. The drive stays in the
+// published state until the unmount has actually succeeded, so the UI and
+// LED never claim "safe to remove" while data may still be in flight.
+//
+// A busy filesystem returns ErrBusy after a few retries. Only when the
+// device has already been physically removed (lazy=true) do we fall back
+// to `umount -l` — then there's nothing left to flush.
+func (m *Manager) unmount(kernel string, lazy bool) error {
 	m.mu.Lock()
 	d, ok := m.drives[kernel]
-	if !ok {
+	if ok && d.Ejecting && lazy {
+		// A busy eject is still retrying and the user pulled the drive.
+		// Tell that loop to give up and lazily release the mount;
+		// otherwise the entry would linger and block the next insert.
+		d.removed = true
 		m.mu.Unlock()
-		return errNotMounted
+		return nil
 	}
-	delete(m.drives, kernel)
-	snap := m.snapshotLocked()
+	if !ok || d.Ejecting {
+		m.mu.Unlock()
+		return ErrNotMounted
+	}
+	d.Ejecting = true
+	drive := *d
+	hook := m.beforeUnmount
 	m.mu.Unlock()
 
-	slog.Info("unmounting", "mp", d.MountPoint)
-	// Try clean unmount first; if the device is already gone the kernel has
-	// already torn down the mount and umount will fail — that's fine.
-	if out, err := exec.Command("/bin/umount", d.MountPoint).CombinedOutput(); err != nil {
-		// Fallback to lazy unmount so we at least release the mount table.
-		if out2, err2 := exec.Command("/bin/umount", "-l", d.MountPoint).CombinedOutput(); err2 != nil {
-			slog.Warn("umount failed", "mp", d.MountPoint,
-				"err", err, "out", strings.TrimSpace(string(out)),
-				"err_lazy", err2, "out_lazy", strings.TrimSpace(string(out2)))
-		}
+	// Publish the Ejecting state first: the Samba writer drops the share
+	// from its config, so clients (macOS auto-reconnects eagerly) can't
+	// re-open it between close-share and umount.
+	m.notify()
+	if hook != nil && !lazy {
+		hook(drive)
 	}
-	_ = os.Remove(d.MountPoint) // rmdir; ignore errors (busy, still mounted, etc)
 
-	m.notify(snap)
+	slog.Info("unmounting", "mp", drive.MountPoint)
+	var lastErr error
+	for i := 0; i < unmountRetries; i++ {
+		out, err := exec.Command("/bin/umount", drive.MountPoint).CombinedOutput()
+		if err == nil || !isDeviceMountedAt(drive.MountPoint) {
+			lastErr = nil
+			break
+		}
+		lastErr = fmt.Errorf("umount %s: %w: %s", drive.MountPoint, err, strings.TrimSpace(string(out)))
+		if lazy || m.wasRemoved(kernel) {
+			lazy = true
+			break
+		}
+		time.Sleep(unmountDelay)
+	}
+	if lastErr != nil && lazy {
+		if out, err := exec.Command("/bin/umount", "-l", drive.MountPoint).CombinedOutput(); err != nil {
+			slog.Warn("lazy umount failed", "mp", drive.MountPoint,
+				"err", err, "out", strings.TrimSpace(string(out)))
+		}
+		lastErr = nil
+	}
+	if lastErr != nil {
+		slog.Warn("unmount refused — filesystem busy", "mp", drive.MountPoint, "err", lastErr)
+		m.mu.Lock()
+		if d, ok := m.drives[kernel]; ok {
+			d.Ejecting = false
+		}
+		m.mu.Unlock()
+		m.notify()
+		return fmt.Errorf("%w: %s is still in use (close open files and retry)", ErrBusy, drive.ShareName)
+	}
+	_ = os.Remove(drive.MountPoint) // rmdir; ignore errors
+
+	m.mu.Lock()
+	delete(m.drives, kernel)
+	m.mu.Unlock()
+	m.notify()
 	return nil
+}
+
+// wasRemoved reports whether a udev remove arrived for kernel while its
+// eject was in progress.
+func (m *Manager) wasRemoved(kernel string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.drives[kernel]
+	return ok && d.removed
+}
+
+// UnmountPartition safely unmounts a single airlock-owned partition,
+// leaving its siblings on the same disk mounted.
+func (m *Manager) UnmountPartition(kernel string) error {
+	return m.unmount(kernel, false)
 }
 
 // Eject unmounts a whole disk and all its partition mounts. It is the safe
@@ -357,19 +504,20 @@ func (m *Manager) Eject(parent string) error {
 	m.mu.Unlock()
 
 	if len(targets) == 0 {
-		return errNotMounted
+		return ErrNotMounted
 	}
-	var firstErr error
+	var errs []error
 	for _, k := range targets {
-		if err := m.unmount(k); err != nil && firstErr == nil {
-			firstErr = err
+		if err := m.unmount(k, false); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return firstErr
+	return errors.Join(errs...)
 }
 
-// EjectAll unmounts every currently-mounted drive.
-func (m *Manager) EjectAll() {
+// EjectAll unmounts every currently-mounted drive. Drives that are still
+// busy stay mounted; their errors are joined into the result.
+func (m *Manager) EjectAll() error {
 	m.mu.Lock()
 	kernels := make([]string, 0, len(m.drives))
 	for k := range m.drives {
@@ -377,30 +525,31 @@ func (m *Manager) EjectAll() {
 	}
 	m.mu.Unlock()
 
+	var errs []error
 	for _, k := range kernels {
-		if err := m.unmount(k); err != nil {
+		if err := m.unmount(k, false); err != nil && !errors.Is(err, ErrNotMounted) {
 			slog.Warn("unmount during eject-all", "kernel", k, "err", err)
+			errs = append(errs, err)
 		}
 	}
+	return errors.Join(errs...)
 }
 
-func (m *Manager) snapshotLocked() Snapshot {
-	out := make([]Drive, 0, len(m.drives))
-	for _, d := range m.drives {
-		out = append(out, *d)
-	}
-	return Snapshot{Drives: out}
-}
-
-func (m *Manager) notify(snap Snapshot) {
+// notify delivers the current state to every listener. The snapshot is
+// taken inside the serialized section, so concurrent changes (udev loop,
+// HTTP handlers, the GPIO button) can't deliver snapshots out of order —
+// the last call always publishes the latest state.
+func (m *Manager) notify() {
+	m.notifyMu.Lock()
+	defer m.notifyMu.Unlock()
+	snap := m.Snapshot()
+	m.mu.Lock()
+	listeners := append([]Listener(nil), m.listeners...)
+	m.mu.Unlock()
 	if m.listener != nil {
 		m.listener(snap)
 	}
-	// Copy the slice under lock so callback code doesn't hold the mutex.
-	m.mu.Lock()
-	extra := append([]Listener(nil), m.listeners...)
-	m.mu.Unlock()
-	for _, l := range extra {
+	for _, l := range listeners {
 		l(snap)
 	}
 }
@@ -412,6 +561,11 @@ func (m *Manager) reserveName(label, kernel string) string {
 	base := sanitizeName(label)
 	if base == "" {
 		base = kernel
+	}
+	// A drive labelled "GLOBAL" must not become Samba's [global] section
+	// (or any other reserved one) in the include file.
+	if reservedShareNames[base] {
+		base += "-" + kernel
 	}
 
 	m.mu.Lock()
@@ -434,6 +588,11 @@ func (m *Manager) reserveName(label, kernel string) string {
 
 var nameSanitizer = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
+// reservedShareNames are smb.conf section names with special meaning.
+var reservedShareNames = map[string]bool{
+	"global": true, "homes": true, "printers": true, "print": true, "ipc": true,
+}
+
 // sanitizeName reduces a filesystem label to something usable as a directory
 // and Samba share name: lowercased, non-alnum collapsed to '-', trimmed.
 func sanitizeName(label string) string {
@@ -446,16 +605,24 @@ func sanitizeName(label string) string {
 	return s
 }
 
-// normalizeFS maps udev-reported filesystem names to the mount(8) -t argument
-// we actually want. The important case is NTFS: we prefer the in-kernel
-// `ntfs3` driver over the userspace `ntfs-3g` FUSE mount.
+// normalizeFS maps udev/blkid-reported filesystem names to the mount(8) -t
+// argument we actually want. The important case is NTFS: we prefer the
+// in-kernel `ntfs3` driver over the userspace `ntfs-3g` FUSE mount.
 func normalizeFS(fs string) string {
 	switch fs {
 	case "ntfs":
 		return "ntfs3"
+	case "fat", "fat16", "fat32":
+		return "vfat"
 	default:
 		return fs
 	}
+}
+
+// IsSupported reports whether airlockd will mount a filesystem type as
+// reported by udev or lsblk (accepts aliases like "fat32" and "ntfs3").
+func IsSupported(fs string) bool {
+	return fs != "" && SupportedFilesystems[normalizeFS(fs)]
 }
 
 // mountOptions returns a comma-separated options string for the given fs.
@@ -517,6 +684,21 @@ func isDeviceMounted(devNode string) bool {
 	return false
 }
 
+// isDeviceMountedAt reports whether mp is still a mount point.
+func isDeviceMountedAt(mp string) bool {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 5 && f[4] == mp {
+			return true
+		}
+	}
+	return false
+}
+
 // isReadOnly consults /sys/block/.../ro to see whether the kernel has marked
 // the block device read-only (e.g. because the SD card's WP switch tripped, or
 // the reader reported RO at attach). Returns false on any error.
@@ -528,12 +710,6 @@ func isReadOnly(kernel string) bool {
 		return false
 	}
 	return strings.TrimSpace(string(data)) == "1"
-}
-
-// deviceSize reads /sys/class/block/<name>/size (in 512-byte sectors) and
-// returns the size in bytes. Returns 0 on error.
-func deviceSize(kernel string) int64 {
-	return DeviceSize(kernel)
 }
 
 // DeviceSize returns the size of a block device (whole disk or partition)
@@ -553,9 +729,8 @@ func DeviceSize(kernel string) int64 {
 // parentKernel infers the whole-disk kernel name for a partition. For sda1 the
 // parent is sda; for mmcblk0p1 the parent is mmcblk0. Returns "" if the device
 // is itself a whole disk.
-func parentKernel(devPath, kernel string) string {
-	// The udev DEVPATH ends in .../block/<parent>/<partition> for partitions.
-	// Cheap approach: strip a trailing partition suffix from `kernel`.
+func parentKernel(kernel string) string {
+	// Strip a trailing partition suffix from `kernel`.
 	if strings.HasPrefix(kernel, "mmcblk") {
 		if i := strings.Index(kernel, "p"); i > len("mmcblk") {
 			return kernel[:i]
@@ -576,6 +751,5 @@ func parentKernel(devPath, kernel string) string {
 	if _, err := os.Stat(filepath.Join("/sys/class/block", parent)); err != nil {
 		return ""
 	}
-	_ = devPath
 	return parent
 }

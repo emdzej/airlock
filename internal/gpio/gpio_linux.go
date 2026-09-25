@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"time"
 
@@ -43,6 +44,9 @@ func New(cfg Config, onPress func()) (*Controller, error) {
 		}),
 	)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+			return nil, fmt.Errorf("%w: %s: %v", ErrUnavailable, cfg.ChipName, err)
+		}
 		return nil, fmt.Errorf("request button line %d: %w", cfg.ButtonPin, err)
 	}
 

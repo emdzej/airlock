@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"os/user"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -63,10 +65,23 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Before each unmount, make smbd drop open handles on the share —
+	// otherwise an active SMB client keeps the filesystem busy.
+	mgr.SetUnmountHook(func(d mount.Drive) {
+		if out, err := exec.Command("smbcontrol", "smbd", "close-share", d.ShareName).CombinedOutput(); err != nil {
+			slog.Warn("smbcontrol close-share", "share", d.ShareName,
+				"err", err, "out", strings.TrimSpace(string(out)))
+		}
+	})
 
 	apiSrv, err := api.New(mgr, orch.setBusy, version)
 	if err != nil {
 		return err
+	}
+	// Extra Host names for the DNS-rebinding guard, for setups that reach
+	// the Pi through a custom DNS record (e.g. "files.example.net").
+	if hosts := os.Getenv("AIRLOCK_ALLOWED_HOSTS"); hosts != "" {
+		apiSrv.SetAllowedHosts(strings.Split(hosts, ","))
 	}
 	// Attach the API server as an additional mount listener so its
 	// SSE event stream sees the same snapshots the samba writer does.
@@ -82,7 +97,9 @@ func run(ctx context.Context) error {
 		go func() {
 			orch.setBusy(true)
 			defer orch.setBusy(false)
-			mgr.EjectAll()
+			if err := mgr.EjectAll(); err != nil {
+				slog.Warn("eject button: some drives are still busy", "err", err)
+			}
 		}()
 	})
 	switch {

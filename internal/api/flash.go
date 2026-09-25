@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -27,19 +26,8 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	if dev.ReadOnly {
-		writeJSON(w, http.StatusForbidden, map[string]string{
-			"error": "device is read-only (write-protect switch?)",
-		})
+	if !s.requireWritableDevice(w, dev) {
 		return
-	}
-	for _, mn := range s.mgr.Snapshot().Drives {
-		if (mn.Kernel == parent || mn.Parent == parent) && mn.ReadOnly {
-			writeJSON(w, http.StatusForbidden, map[string]string{
-				"error": "at least one partition on this device is read-only",
-			})
-			return
-		}
 	}
 
 	comp := flash.Compression(r.URL.Query().Get("compression"))
@@ -64,55 +52,28 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
+	release, ok := s.beginOp(w, parent, "flash")
+	if !ok {
+		return
+	}
+	defer release()
 
-	s.onBusy(true)
-	defer s.onBusy(false)
-
-	events := make(chan flash.Event, 32)
-	go func() {
-		defer close(events)
+	streamOp(s, w, func(emit func(flash.Event)) error {
 		// Background context — client aborts should still let us finish
-		// the writes we've started. Reading r.Body will error naturally
-		// if the client disconnects, which propagates as a flash error.
+		// (or cleanly fail) the writes we've started. Reading r.Body
+		// errors naturally if the client disconnects, which propagates as
+		// a flash error.
 		err := s.flsh.Flash(context.Background(), flash.Request{
 			Parent:      parent,
 			Compression: comp,
 			Source:      r.Body,
-			UploadBytes: r.ContentLength,
-		}, func(ev flash.Event) {
-			select {
-			case events <- ev:
-			default:
-				// buffer full — drop this update, more will come
-			}
-		})
+			Release:     release,
+		}, emit)
 		if err != nil {
 			slog.Error("flash failed", "parent", parent, "err", err)
-			select {
-			case events <- flash.Event{Stage: "error", Message: err.Error()}:
-			default:
-			}
 		}
-	}()
-
-	for ev := range events {
-		data, _ := json.Marshal(ev)
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-			// Client disconnected. Drain remaining events so the
-			// goroutine can finish and unmount properly.
-			go func() {
-				for range events {
-				}
-			}()
-			return
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
+		return err
+	}, func(err error) flash.Event {
+		return flash.Event{Stage: "error", Message: err.Error()}
+	})
 }

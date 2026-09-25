@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/emdzej/airlock/internal/devices"
 	"github.com/emdzej/airlock/internal/mount"
 )
 
@@ -62,10 +63,9 @@ type Request struct {
 	Compression Compression
 	// Source is the byte stream — usually r.Body. Read to EOF.
 	Source io.Reader
-	// UploadBytes is Content-Length from the request, when known. Used
-	// only for early-fail sanity: if the raw upload is already larger
-	// than the target, we can refuse before opening the device.
-	UploadBytes int64
+	// Release lifts the caller's mount.Manager.BeginOp hold; called just
+	// before the final udev re-trigger. Must be idempotent.
+	Release func()
 }
 
 // Event is one progress notification streamed to the client. Stage
@@ -85,84 +85,70 @@ type Flasher struct {
 // New returns a Flasher bound to the given mount manager.
 func New(mgr *mount.Manager) *Flasher { return &Flasher{mgr: mgr} }
 
-// isSafeKernelName defends against attacker-supplied Parent values —
-// only lowercase letters + digits (matches "sda", "sdb1", "nvme0n1", …).
-func isSafeKernelName(name string) bool {
-	if name == "" || len(name) > 32 {
-		return false
-	}
-	for _, r := range name {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
-			return false
-		}
-	}
-	return true
-}
-
 // Flash runs the full destructive flash operation, calling progress
 // with each stage plus periodic byte-count updates during the write.
-// Runs synchronously; callers wanting async should invoke in a goroutine.
+// Runs synchronously; the caller must hold mgr.BeginOp for req.Parent.
 func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) error {
 	if !req.Compression.Valid() {
 		return fmt.Errorf("unsupported compression: %q", req.Compression)
 	}
-	if !isSafeKernelName(req.Parent) {
+	if !devices.ValidKernelName(req.Parent) {
 		return fmt.Errorf("invalid parent device: %q", req.Parent)
 	}
 	if progress == nil {
 		progress = func(Event) {}
 	}
+	release := req.Release
+	if release == nil {
+		release = func() {}
+	}
 	emit := func(stage, msg string) { progress(Event{Stage: stage, Message: msg}) }
 
 	dev := "/dev/" + req.Parent
 
-	// Quarantine so the mount manager ignores any udev events for this
-	// device while we're mid-flash. Otherwise the new partition table
-	// created by the image would fire ADDs that race with mkfs. Same
-	// pattern as format.
-	f.mgr.Quarantine(req.Parent)
-	quarantineLifted := false
-	defer func() {
-		if !quarantineLifted {
-			f.mgr.Unquarantine(req.Parent)
-		}
-	}()
-
-	// Drop any Samba client sessions that are currently holding shares
-	// on this device open. Without this, umount races with smbd's fds.
-	for _, d := range f.mgr.Snapshot().Drives {
-		if d.Kernel == req.Parent || d.Parent == req.Parent {
-			_, _ = exec.CommandContext(ctx, "smbcontrol", "smbd", "close-share", d.ShareName).CombinedOutput()
-		}
-	}
-
+	// The manager closes Samba sessions on these shares before unmounting,
+	// so smbd doesn't race us for the device.
 	emit("unmount", "unmounting existing partitions on "+dev)
 	if err := f.mgr.Eject(req.Parent); err != nil && !errors.Is(err, mount.ErrNotMounted) {
 		return fmt.Errorf("unmount %s: %w", dev, err)
 	}
 	syscall.Sync()
 
+	// Cancelling ctx on any failure kills the xz child. Without this a
+	// failed device write would leave xz blocked on a full stdout pipe and
+	// the deferred Wait would hang forever.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// Wire up the source stream. For xz we shell out; for gz we use the
 	// stdlib. For raw uploads Source is the reader as-is.
 	source := req.Source
-	var xzCmd *exec.Cmd
+	var (
+		xzCmd *exec.Cmd
+		xzErr strings.Builder
+	)
 	switch req.Compression {
 	case CompressionXZ:
 		xzCmd = exec.CommandContext(ctx, "xz", "-dc")
 		xzCmd.Stdin = req.Source
+		xzCmd.Stderr = &xzErr
+		// Don't let Wait hang on the stdin copier if the client stalls
+		// after we've killed xz.
+		xzCmd.WaitDelay = 5 * time.Second
 		stdout, err := xzCmd.StdoutPipe()
 		if err != nil {
 			return fmt.Errorf("xz stdout pipe: %w", err)
 		}
-		var xzErr strings.Builder
-		xzCmd.Stderr = &xzErr
 		if err := xzCmd.Start(); err != nil {
 			return fmt.Errorf("xz start: %w", err)
 		}
+		// On failure paths: kill xz, then reap it. The success path below
+		// calls Wait itself so xz's exit status (corrupt input, truncated
+		// upload) turns into a flash error.
 		defer func() {
-			_ = xzCmd.Wait()
-			if e := strings.TrimSpace(xzErr.String()); e != "" {
-				slog.Warn("xz stderr", "err", e)
+			if xzCmd != nil {
+				cancel()
+				_ = xzCmd.Wait()
 			}
 		}()
 		source = stdout
@@ -176,7 +162,10 @@ func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) 
 	}
 
 	emit("write", "writing to "+dev)
-	target, err := os.OpenFile(dev, os.O_WRONLY, 0)
+	// O_EXCL on a block device fails with EBUSY if anything (a mount, the
+	// running system) still holds it — last line of defence against
+	// overwriting a live filesystem.
+	target, err := os.OpenFile(dev, os.O_WRONLY|os.O_EXCL, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", dev, err)
 	}
@@ -188,10 +177,8 @@ func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) 
 	var written int64
 	var lastEmit time.Time
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		n, rerr := source.Read(buf)
 		if n > 0 {
@@ -209,6 +196,13 @@ func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) 
 		}
 		if rerr != nil {
 			return fmt.Errorf("read source: %w", rerr)
+		}
+	}
+	if xzCmd != nil {
+		werr := xzCmd.Wait()
+		xzCmd = nil // reaped
+		if werr != nil {
+			return fmt.Errorf("xz: %w: %s", werr, strings.TrimSpace(xzErr.String()))
 		}
 	}
 	// Final "here's the total" event so the UI shows the last number.
@@ -231,8 +225,7 @@ func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) 
 
 	// Lift the quarantine BEFORE trigger — otherwise the daemon would
 	// skip the new partitions.
-	f.mgr.Unquarantine(req.Parent)
-	quarantineLifted = true
+	release()
 	_ = exec.CommandContext(ctx, "udevadm", "trigger", "--action=change", dev).Run()
 	_ = exec.CommandContext(ctx, "udevadm", "settle").Run()
 

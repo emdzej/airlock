@@ -13,8 +13,9 @@ import (
 )
 
 // WatchUEvents subscribes to udev-processed events on netlink group 2 and
-// delivers them on the returned channel until ctx is cancelled. On cancel the
-// socket is shut down, which unblocks the receive loop and closes the channel.
+// delivers them on the returned channel until ctx is cancelled. shutdown(2)
+// doesn't unblock recvfrom on a netlink socket, so the socket has a 1 s
+// receive timeout and the loop re-checks ctx on each timeout.
 func WatchUEvents(ctx context.Context) (<-chan UEvent, error) {
 	fd, err := syscall.Socket(syscall.AF_NETLINK, syscall.SOCK_RAW, syscall.NETLINK_KOBJECT_UEVENT)
 	if err != nil {
@@ -28,22 +29,28 @@ func WatchUEvents(ctx context.Context) (<-chan UEvent, error) {
 		_ = syscall.Close(fd)
 		return nil, fmt.Errorf("netlink bind: %w", err)
 	}
+	tv := syscall.Timeval{Sec: 1}
+	if err := syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv); err != nil {
+		_ = syscall.Close(fd)
+		return nil, fmt.Errorf("netlink SO_RCVTIMEO: %w", err)
+	}
 
 	out := make(chan UEvent, 32)
 	go func() {
 		defer close(out)
 		defer syscall.Close(fd)
 
-		go func() {
-			<-ctx.Done()
-			_ = syscall.Shutdown(fd, syscall.SHUT_RDWR)
-		}()
-
 		buf := make([]byte, 1<<16)
 		for {
+			if ctx.Err() != nil {
+				return
+			}
 			n, _, err := syscall.Recvfrom(fd, buf, 0)
 			if err != nil {
-				if ctx.Err() != nil || errors.Is(err, syscall.EBADF) || errors.Is(err, syscall.EINVAL) {
+				if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR) {
+					continue // receive timeout: re-check ctx
+				}
+				if errors.Is(err, syscall.EBADF) || errors.Is(err, syscall.EINVAL) {
 					return
 				}
 				slog.Warn("netlink recv error", "err", err)

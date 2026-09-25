@@ -74,6 +74,13 @@
         // keeps hover / focus / scroll intact between polls.
         let lastSig = "";
 
+        // errText extracts the {"error": "..."} message from a failed API
+        // response, falling back to the raw body.
+        async function errText(r) {
+            const body = await r.text();
+            try { return JSON.parse(body).error || body; } catch { return body; }
+        }
+
         async function refresh() {
             if (document.hidden) return;
             let drives;
@@ -140,7 +147,8 @@
             row.appendChild(info);
 
             const ejectBtn = document.createElement("button");
-            ejectBtn.textContent = "Eject";
+            ejectBtn.textContent = d.ejecting ? "Ejecting…" : "Eject";
+            ejectBtn.disabled = d.ejecting;
             ejectBtn.onclick = () => eject(d.share_name, ejectBtn);
             row.appendChild(ejectBtn);
             return row;
@@ -151,7 +159,7 @@
             btn.textContent = "Ejecting…";
             const r = await fetch("/api/drives/" + encodeURIComponent(name) + "/eject", {method: "POST"});
             if (!r.ok) {
-                alert("Eject failed: " + await r.text());
+                alert("Eject failed: " + await errText(r));
                 btn.disabled = false;
                 btn.textContent = "Eject";
                 return;
@@ -161,7 +169,7 @@
 
         $("eject-all-btn").onclick = async () => {
             const r = await fetch("/api/eject-all", {method: "POST"});
-            if (!r.ok) { alert("Eject failed: " + await r.text()); return; }
+            if (!r.ok) { alert("Eject failed: " + await errText(r)); lastSig = ""; refresh(); return; }
             lastSig = ""; refresh();
         };
 

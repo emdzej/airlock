@@ -15,8 +15,8 @@ const (
 
 // Config picks the chip and pin numbers.
 type Config struct {
-	// ChipName is the basename under /dev, e.g. "gpiochip0" (Pi 4).
-	// Pi 5 uses "gpiochip4" for the header pins — override there.
+	// ChipName is the basename under /dev, e.g. "gpiochip0" (Pi 4, the
+	// only board airlock is tested on).
 	ChipName string
 
 	// ButtonPin is the BCM GPIO number wired to the eject button.

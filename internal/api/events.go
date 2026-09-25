@@ -13,8 +13,9 @@ import (
 
 // broadcaster fans a drive-list snapshot out to every currently-
 // subscribed SSE client. Subscribers get a buffered channel; slow
-// consumers have events dropped rather than back-pressuring the
-// producer — a stale event is better than blocking the daemon.
+// consumers lose their *oldest* queued event rather than back-pressuring
+// the producer. Every event is a full snapshot, so the newest one is the
+// one that must get through.
 type broadcaster struct {
 	mu   sync.Mutex
 	subs map[chan []byte]struct{}
@@ -42,16 +43,23 @@ func (b *broadcaster) Subscribe() (<-chan []byte, func()) {
 	}
 }
 
-// Publish delivers msg to every current subscriber. Slow subscribers
-// have this message dropped; they'll get the next one.
+// Publish delivers msg to every current subscriber without blocking. A
+// full subscriber buffer has its oldest entry discarded to make room.
 func (b *broadcaster) Publish(msg []byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for ch := range b.subs {
-		select {
-		case ch <- msg:
-		default:
-			// drop; producer must not block
+		for {
+			select {
+			case ch <- msg:
+			default:
+				select {
+				case <-ch: // discard oldest, retry
+				default:
+				}
+				continue
+			}
+			break
 		}
 	}
 }
@@ -119,6 +127,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-s.closing:
 			return
 		case <-heartbeat.C:
 			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {

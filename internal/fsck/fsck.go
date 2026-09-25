@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -41,15 +40,14 @@ var ErrUnsupportedFS = errors.New("filesystem not supported by fsck")
 type Request struct {
 	// Partition kernel name, e.g. "sdb1".
 	Partition string
-	// Parent whole-disk kernel name, used only to identify which airlock
-	// share to unmount before the tool runs. May be empty for superfloppy
-	// layouts where Partition is itself the whole disk.
-	Parent string
 	// FSType matches the udev/blkid FS_TYPE value: vfat, exfat, ntfs,
 	// ext2/3/4, hfsplus.
 	FSType string
 	// Mode selects check vs repair.
 	Mode Mode
+	// Release lifts the caller's mount.Manager.BeginOp hold; called just
+	// before the final udev re-trigger. Must be idempotent.
+	Release func()
 }
 
 // Event is one progress notification streamed to the client. `Stage`
@@ -80,7 +78,8 @@ func SupportedForFS(fs string) bool {
 // Check runs the appropriate fsck tool. Streams the tool's stdout+
 // stderr line-by-line to progress. Returns an error only if the tool
 // itself failed to start or exited with a code we consider fatal
-// (>=8 for e2fsck, ≠0 for others).
+// (>=8 for e2fsck, ≠0 for others). The caller must hold mgr.BeginOp for
+// the partition's disk, so the daemon can't re-mount it mid-repair.
 func (c *Checker) Check(ctx context.Context, req Request, progress func(Event)) error {
 	if !req.Mode.Valid() {
 		return fmt.Errorf("invalid mode: %q", req.Mode)
@@ -98,15 +97,16 @@ func (c *Checker) Check(ctx context.Context, req Request, progress func(Event)) 
 		emit("warn", warning)
 	}
 
-	// Unmount if we own this partition. Skip for hfsplus which we mount
-	// read-only anyway — its check tool works on RO mounts fine.
-	if c.mgr != nil && isCurrentlyMounted(c.mgr, req.Partition) {
+	release := req.Release
+	if release == nil {
+		release = func() {}
+	}
+
+	// Unmount this partition if we own it (siblings on the same disk stay
+	// mounted). Every tool, hfsplus included, wants the volume offline.
+	if c.mgr != nil && c.mgr.IsMounted(req.Partition) {
 		emit("unmount", "unmounting /dev/"+req.Partition+" before check")
-		target := req.Parent
-		if target == "" {
-			target = req.Partition
-		}
-		if err := c.mgr.Eject(target); err != nil && !errors.Is(err, mount.ErrNotMounted) {
+		if err := c.mgr.UnmountPartition(req.Partition); err != nil && !errors.Is(err, mount.ErrNotMounted) {
 			return fmt.Errorf("unmount before fsck: %w", err)
 		}
 	}
@@ -139,12 +139,13 @@ func (c *Checker) Check(ctx context.Context, req Request, progress func(Event)) 
 
 	// Re-scan the device so the mount manager picks it up if it was
 	// unmounted. Read errors ignored — the manager tolerates duplicates.
+	release()
 	_ = exec.CommandContext(ctx, "udevadm", "trigger", "--action=change", "/dev/"+req.Partition).Run()
 	_ = exec.CommandContext(ctx, "udevadm", "settle").Run()
 
 	// Interpret the exit code — same convention across fsck tools:
 	//   0     = clean
-	//   1     = errors corrected (fine)
+	//   1     = errors corrected (fine) — in check mode: errors found
 	//   2     = errors corrected, reboot recommended (still fine here)
 	//   4     = errors remain uncorrected
 	//   >= 8  = operational failure
@@ -152,6 +153,8 @@ func (c *Checker) Check(ctx context.Context, req Request, progress func(Event)) 
 	switch {
 	case exit == 0:
 		final.Message = "clean"
+	case exit <= 2 && req.Mode == ModeCheck:
+		final.Message = "errors found — run repair mode to fix them"
 	case exit <= 2:
 		final.Message = "errors corrected"
 	case exit == 4:
@@ -209,17 +212,3 @@ func fsckCommand(fs string, mode Mode, dev string) (string, []string, string) {
 	}
 	return "", nil, ""
 }
-
-// isCurrentlyMounted returns true if the mount manager owns a mount
-// for the given partition kernel name.
-func isCurrentlyMounted(mgr *mount.Manager, partition string) bool {
-	for _, d := range mgr.Snapshot().Drives {
-		if d.Kernel == partition {
-			return true
-		}
-	}
-	return false
-}
-
-// silence an unused-import lint when io isn't referenced below.
-var _ = io.EOF

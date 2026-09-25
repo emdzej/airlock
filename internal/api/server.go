@@ -1,17 +1,17 @@
-// Package api serves the airlockd HTTP interface: a status page and a small
-// JSON API for eject operations. File browsing and format come in M2/M3.
+// Package api serves the airlockd HTTP interface: the web UI pages and the
+// JSON / SSE API for drives, files, and whole-device operations.
 package api
 
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/emdzej/airlock/internal/flash"
@@ -42,6 +42,10 @@ type Server struct {
 	onBusy  BusyFunc
 	version string
 	events  *broadcaster
+
+	allowedHosts []string       // extra Host names for the rebinding guard
+	ops          sync.WaitGroup // in-flight device operations
+	closing      chan struct{}  // closed when the HTTP server shuts down
 }
 
 // New parses templates and returns a Server. onBusy may be nil.
@@ -65,6 +69,7 @@ func New(mgr *mount.Manager, onBusy BusyFunc, version string) (*Server, error) {
 		onBusy:  onBusy,
 		version: version,
 		events:  newBroadcaster(),
+		closing: make(chan struct{}),
 	}, nil
 }
 
@@ -86,7 +91,8 @@ func (s *Server) common(active string) commonData {
 	}
 }
 
-// Handler returns the HTTP handler tree.
+// Handler returns the HTTP handler tree, wrapped in the cross-origin and
+// Host guards.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// Pages
@@ -118,17 +124,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /devices", s.handleDevicesPage)
 	// Event stream (SSE)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
-	return mux
+	return s.guard(mux)
 }
 
 // Run starts the HTTP server and blocks until ctx is done, then shuts down
-// gracefully with a 10-second deadline.
+// gracefully: open event streams are closed right away, idle connections
+// get a 10-second deadline, and any running format / flash / fsck is
+// waited for rather than killed mid-write.
 func (s *Server) Run(ctx context.Context, addr string) error {
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	srv.RegisterOnShutdown(func() { close(s.closing) })
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("http server listening", "addr", addr)
@@ -138,7 +147,19 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		err := srv.Shutdown(shutdownCtx)
+		done := make(chan struct{})
+		go func() { s.ops.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(250 * time.Millisecond):
+			slog.Warn("waiting for running device operations to finish")
+			<-done
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil // long-running handlers finished above
+		}
+		return err
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
@@ -159,6 +180,7 @@ type drivePayload struct {
 	MountPoint  string `json:"mount_point"`
 	Kernel      string `json:"kernel"`
 	Parent      string `json:"parent"`
+	Ejecting    bool   `json:"ejecting"`
 }
 
 func payloadFor(d mount.Drive) drivePayload {
@@ -173,6 +195,7 @@ func payloadFor(d mount.Drive) drivePayload {
 		MountPoint:  d.MountPoint,
 		Kernel:      d.Kernel,
 		Parent:      d.Parent,
+		Ejecting:    d.Ejecting,
 	}
 }
 
@@ -219,15 +242,14 @@ func (s *Server) handleListDrives(w http.ResponseWriter, _ *http.Request) {
 	for _, d := range snap.Drives {
 		out = append(out, payloadFor(d))
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleEject(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	drive, ok := s.findByShare(name)
 	if !ok {
-		http.Error(w, "drive not found", http.StatusNotFound)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "drive not found"})
 		return
 	}
 	parent := drive.Parent
@@ -236,8 +258,8 @@ func (s *Server) handleEject(w http.ResponseWriter, r *http.Request) {
 	}
 	s.onBusy(true)
 	defer s.onBusy(false)
-	if err := s.mgr.Eject(parent); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := s.mgr.Eject(parent); err != nil && !errors.Is(err, mount.ErrNotMounted) {
+		writeJSON(w, ejectStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -246,8 +268,20 @@ func (s *Server) handleEject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEjectAll(w http.ResponseWriter, _ *http.Request) {
 	s.onBusy(true)
 	defer s.onBusy(false)
-	s.mgr.EjectAll()
+	if err := s.mgr.EjectAll(); err != nil {
+		writeJSON(w, ejectStatus(err), map[string]string{"error": err.Error()})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ejectStatus maps an unmount error to an HTTP status: a busy filesystem
+// is a 409 the user can resolve (close files, retry).
+func ejectStatus(err error) int {
+	if errors.Is(err, mount.ErrBusy) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
 }
 
 func (s *Server) findByShare(name string) (mount.Drive, bool) {

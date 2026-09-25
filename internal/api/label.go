@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -21,47 +22,12 @@ import (
 func (s *Server) handleSetLabel(w http.ResponseWriter, r *http.Request) {
 	partition := r.PathValue("name")
 
-	// Look up the partition through the devices enumeration to find its
-	// parent and current filesystem type.
-	all, err := devices.List()
+	dev, part, err := devices.FindPartition(partition)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, lookupStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
-	var (
-		parent string
-		fsType string
-		ro     bool
-		found  bool
-	)
-	for _, d := range all {
-		if d.Name == partition {
-			// Whole-disk with a filesystem (superfloppy layout).
-			parent = ""
-			fsType = ""
-			for _, p := range d.Partitions {
-				_ = p
-			}
-			// A whole disk with an fs on itself isn't captured by the
-			// devices/partitions split; skip and continue looking below.
-		}
-		for _, p := range d.Partitions {
-			if p.Name == partition {
-				parent = d.Name
-				fsType = p.FSType
-				ro = d.ReadOnly
-				found = true
-				break
-			}
-		}
-		if found {
-			break
-		}
-	}
-	if !found {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "partition not found"})
-		return
-	}
+	fsType, ro := part.FSType, dev.ReadOnly
 	if ro {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "device is read-only"})
 		return
@@ -81,20 +47,30 @@ func (s *Server) handleSetLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, ok := s.beginOp(w, dev.Name, "relabel")
+	if !ok {
+		return
+	}
+	defer release()
+	s.ops.Add(1)
+	defer s.ops.Done()
 	s.onBusy(true)
 	defer s.onBusy(false)
 
-	if err := label.Set(r.Context(), s.mgr, label.Request{
+	// Background context, like the other device operations: a client
+	// disconnect must not kill the tool half-way through a write.
+	if err := label.Set(context.Background(), s.mgr, label.Request{
 		Partition: partition,
-		Parent:    parent,
 		FSType:    fsType,
 		Label:     body.Label,
+		Release:   release,
 	}); err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, label.ErrInvalidLabel) {
+		switch {
+		case errors.Is(err, label.ErrInvalidLabel), errors.Is(err, label.ErrUnsupportedFS):
 			status = http.StatusBadRequest
-		} else if errors.Is(err, label.ErrUnsupportedFS) {
-			status = http.StatusBadRequest
+		case errors.Is(err, mount.ErrBusy):
+			status = http.StatusConflict
 		}
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
@@ -111,30 +87,12 @@ func (s *Server) handleSetLabel(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMountPartition(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
-	all, err := devices.List()
+	_, found, err := devices.FindPartition(name)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, lookupStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
-	var found devices.Partition
-	var device devices.Device
-	for _, d := range all {
-		for _, p := range d.Partitions {
-			if p.Name == name {
-				found = p
-				device = d
-				break
-			}
-		}
-		if found.Name != "" {
-			break
-		}
-	}
-	if found.Name == "" {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "partition not found (not USB-attached?)"})
-		return
-	}
-	if !mount.SupportedFilesystems[normalizeFSName(found.FSType)] {
+	if !mount.IsSupported(found.FSType) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "filesystem not supported for auto-mount: " + found.FSType,
 		})
@@ -144,8 +102,6 @@ func (s *Server) handleMountPartition(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "partition already mounted"})
 		return
 	}
-	_ = device // reserved for future safety checks
-
 	slog.Info("mount requested", "partition", name)
 	dev := "/dev/" + name
 	out, err := exec.Command("udevadm", "trigger", "--action=add", dev).CombinedOutput()
@@ -161,15 +117,10 @@ func (s *Server) handleMountPartition(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// normalizeFSName maps blkid's FS name string to the key used in
-// mount.SupportedFilesystems (which uses "vfat", "exfat", "ntfs", etc.).
-func normalizeFSName(fs string) string {
-	switch fs {
-	case "fat", "fat32", "fat16":
-		return "vfat"
-	case "ntfs3":
-		return "ntfs"
-	default:
-		return fs
+// lookupStatus maps a devices lookup error to an HTTP status.
+func lookupStatus(err error) int {
+	if errors.Is(err, devices.ErrNotFound) {
+		return http.StatusNotFound
 	}
+	return http.StatusInternalServerError
 }

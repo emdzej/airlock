@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/emdzej/airlock/internal/mount"
 )
@@ -28,19 +29,19 @@ var ErrInvalidLabel = errors.New("invalid label")
 type Request struct {
 	// Partition is the kernel name of the partition, e.g. "sdb1".
 	Partition string
-	// Parent is the whole-disk kernel name, used to identify which airlock
-	// share (if any) needs to be unmounted first. If empty, we assume
-	// Partition is the whole disk (superfloppy).
-	Parent string
 	// FSType matches the udev/blkid FS_TYPE value: vfat, exfat, ntfs, ext2/3/4.
 	FSType string
 	// Label is the new label to set. Trimmed and validated per FS.
 	Label string
+	// Release lifts the caller's mount.Manager.BeginOp hold; called just
+	// before the final udev re-trigger. Must be idempotent.
+	Release func()
 }
 
 // Set validates the request, unmounts any airlock-owned mount for this
 // partition, runs the FS-specific tool, then triggers udev so the daemon
-// re-mounts the volume under its new label.
+// re-mounts the volume under its new label. The caller must hold
+// mgr.BeginOp for the partition's disk.
 func Set(ctx context.Context, mgr *mount.Manager, req Request) error {
 	label := strings.TrimSpace(req.Label)
 	if err := validateLabel(req.FSType, label); err != nil {
@@ -49,16 +50,15 @@ func Set(ctx context.Context, mgr *mount.Manager, req Request) error {
 
 	dev := "/dev/" + req.Partition
 
+	release := req.Release
+	if release == nil {
+		release = func() {}
+	}
+
 	// If we currently own a mount for this partition, drop it before the
-	// tool runs. The parent-based Eject also handles sibling partitions on
-	// the same device, which is fine — the udevadm trigger at the end
-	// picks them up again.
-	if isCurrentlyMounted(mgr, req.Partition) {
-		targetParent := req.Parent
-		if targetParent == "" {
-			targetParent = req.Partition
-		}
-		if err := mgr.Eject(targetParent); err != nil && !errors.Is(err, mount.ErrNotMounted) {
+	// tool runs. Sibling partitions on the same disk stay mounted.
+	if mgr.IsMounted(req.Partition) {
+		if err := mgr.UnmountPartition(req.Partition); err != nil && !errors.Is(err, mount.ErrNotMounted) {
 			return fmt.Errorf("unmount before relabel: %w", err)
 		}
 	}
@@ -73,6 +73,7 @@ func Set(ctx context.Context, mgr *mount.Manager, req Request) error {
 	}
 
 	// Nudge udev so the mount manager picks up the fresh blkid metadata.
+	release()
 	_ = exec.CommandContext(ctx, "udevadm", "trigger", "--action=change", dev).Run()
 	_ = exec.CommandContext(ctx, "udevadm", "settle").Run()
 	return nil
@@ -128,8 +129,18 @@ func validateLabel(fs, label string) error {
 	if strings.ContainsAny(label, "\x00/") {
 		return fmt.Errorf("%w: contains NUL or slash", ErrInvalidLabel)
 	}
+	// The label is passed as a positional argument; a leading '-' would
+	// be parsed as an option by the tool (e.g. ntfslabel --new-serial).
+	if strings.HasPrefix(label, "-") {
+		return fmt.Errorf("%w: must not start with '-'", ErrInvalidLabel)
+	}
+	// ext labels are limited in bytes; the others in characters.
+	n := utf8.RuneCountInString(label)
+	if strings.HasPrefix(fs, "ext") {
+		n = len(label)
+	}
 	max := MaxLenForFS(fs)
-	if max > 0 && len(label) > max {
+	if max > 0 && n > max {
 		return fmt.Errorf("%w: too long for %s (max %d chars)", ErrInvalidLabel, fs, max)
 	}
 	// FAT is very restrictive on legal characters — the tool will error
@@ -154,14 +165,3 @@ func isFATish(fs string) bool {
 // legal set; anything not in this pattern is rejected client-side before
 // we spawn fatlabel.
 var fatLabelPattern = regexp.MustCompile(`^[A-Z0-9 _\-.$~!#]+$`)
-
-// isCurrentlyMounted returns true if the mount manager is holding a mount
-// for the given partition kernel name.
-func isCurrentlyMounted(mgr *mount.Manager, partition string) bool {
-	for _, d := range mgr.Snapshot().Drives {
-		if d.Kernel == partition {
-			return true
-		}
-	}
-	return false
-}

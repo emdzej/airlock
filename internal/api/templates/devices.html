@@ -461,7 +461,12 @@
             btn.disabled = true;
             btn.textContent = "Ejecting…";
             const r = await fetch("/api/devices/" + encodeURIComponent(name) + "/eject", {method: "POST"});
-            if (!r.ok) alert("Eject failed: " + await r.text());
+            if (!r.ok) {
+                const body = await r.text();
+                let msg = body;
+                try { msg = JSON.parse(body).error || body; } catch {}
+                alert("Eject failed: " + msg);
+            }
             lastSig = ""; load(true);
         }
 

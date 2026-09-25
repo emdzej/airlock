@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -46,6 +47,16 @@ func (s *Server) handleDump(w http.ResponseWriter, r *http.Request) {
 
 	filename := dumpFilename(dev, comp)
 
+	// Hold the disk so a format / flash can't start rewriting it under an
+	// in-progress dump (and vice versa).
+	release, ok := s.beginOp(w, parent, "dump")
+	if !ok {
+		return
+	}
+	defer release()
+	s.ops.Add(1)
+	defer s.ops.Done()
+
 	syscall.Sync()
 
 	devPath := "/dev/" + parent
@@ -57,7 +68,7 @@ func (s *Server) handleDump(w http.ResponseWriter, r *http.Request) {
 	defer src.Close()
 
 	w.Header().Set("Content-Type", contentTypeFor(comp))
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	// Content-Length is only useful for uncompressed streams; xz/gz sizes
 	// aren't known ahead of time.
 	if comp == flash.CompressionNone && dev.SizeBytes > 0 {

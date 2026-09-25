@@ -67,6 +67,9 @@ func Render(snap mount.Snapshot, owner Owner) string {
 	var b strings.Builder
 	b.WriteString("# Managed by airlockd. Do not edit by hand — changes are overwritten.\n\n")
 	for _, d := range drives {
+		if d.Ejecting {
+			continue // withdrawn so clients can't reconnect mid-unmount
+		}
 		writeShare(&b, d, owner)
 	}
 	return b.String()

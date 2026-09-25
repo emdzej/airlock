@@ -3,11 +3,9 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"mime"
 	"net/http"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -17,6 +15,7 @@ import (
 
 // rootFor resolves the share name to a mounted Drive and its fsops.Root.
 // Returns nil, empty, false if no matching drive is mounted right now.
+// The caller must Close the returned Root.
 func (s *Server) rootFor(share string) (*fsops.Root, mount.Drive, bool) {
 	d, ok := s.findByShare(share)
 	if !ok {
@@ -45,7 +44,7 @@ func writeError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 	case errors.Is(err, fsops.ErrTraversal), errors.Is(err, fsops.ErrInvalidName):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-	case errors.Is(err, fsops.ErrIsDirectory):
+	case errors.Is(err, fsops.ErrIsDirectory), errors.Is(err, fsops.ErrNotRegular):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	default:
 		slog.Error("file op", "err", err)
@@ -72,6 +71,7 @@ func (s *Server) handleLs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "drive not found"})
 		return
 	}
+	defer root.Close()
 	rel := r.URL.Query().Get("path")
 	entries, err := root.List(rel)
 	if err != nil {
@@ -90,9 +90,10 @@ func (s *Server) handleLs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	root, _, ok := s.rootFor(r.PathValue("share"))
 	if !ok {
-		http.Error(w, "drive not found", http.StatusNotFound)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "drive not found"})
 		return
 	}
+	defer root.Close()
 	rel := r.URL.Query().Get("path")
 	f, info, err := root.Open(rel)
 	if err != nil {
@@ -107,7 +108,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
-	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(name, `"`, `\"`)+`"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
 
@@ -116,13 +117,14 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 // dead simple and avoids the "browsers may strip slashes from multipart
 // filenames" hazard — the target path is fully client-controlled via the
 // query parameter. Parent directories are mkdir-p'd. Existing files are
-// overwritten.
+// replaced atomically — a failed upload leaves the old file intact.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	root, d, ok := s.rootFor(r.PathValue("share"))
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "drive not found"})
 		return
 	}
+	defer root.Close()
 	if !requireWritable(w, d) {
 		return
 	}
@@ -131,34 +133,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path is required"})
 		return
 	}
-	if strings.Contains(dst, "..") {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
-		return
-	}
-
-	if parent := path.Dir(dst); parent != "" && parent != "." && parent != "/" {
-		if err := root.Mkdir(parent); err != nil {
-			writeError(w, err)
-			return
-		}
-	}
-	f, err := root.Create(dst)
+	n, err := root.WriteAtomic(dst, r.Body)
 	if err != nil {
 		writeError(w, err)
-		return
-	}
-	n, copyErr := io.Copy(f, r.Body)
-	closeErr := f.Close()
-	if copyErr != nil {
-		// Best-effort partial cleanup so the browser doesn't see a
-		// half-written file sitting on the drive.
-		_ = root.Remove(dst)
-		writeError(w, copyErr)
-		return
-	}
-	if closeErr != nil {
-		_ = root.Remove(dst)
-		writeError(w, closeErr)
 		return
 	}
 	slog.Info("uploaded", "share", d.ShareName, "path", dst, "bytes", n)
@@ -172,6 +149,7 @@ func (s *Server) handleRm(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "drive not found"})
 		return
 	}
+	defer root.Close()
 	if !requireWritable(w, d) {
 		return
 	}
@@ -195,6 +173,7 @@ func (s *Server) handleMv(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "drive not found"})
 		return
 	}
+	defer root.Close()
 	if !requireWritable(w, d) {
 		return
 	}
@@ -225,6 +204,7 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "drive not found"})
 		return
 	}
+	defer root.Close()
 	if !requireWritable(w, d) {
 		return
 	}

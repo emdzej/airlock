@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -105,7 +103,7 @@ func (s *Server) devicePayload(d devices.Device) devicePayload {
 			ShareName:   shareByKernel[p.Name],
 			CanRelabel:  !d.ReadOnly && label.SupportedForFS(p.FSType),
 			MaxLabelLen: label.MaxLenForFS(p.FSType),
-			CanMount:    !p.IsAirlock && p.MountPoint == "" && mount.SupportedFilesystems[normalizeFSName(p.FSType)],
+			CanMount:    !p.IsAirlock && p.MountPoint == "" && mount.IsSupported(p.FSType),
 			CanFsck:     fsck.SupportedForFS(p.FSType),
 		})
 	}
@@ -141,30 +139,17 @@ func (s *Server) devicePayload(d devices.Device) devicePayload {
 func (s *Server) handleFormat(w http.ResponseWriter, r *http.Request) {
 	parent := r.PathValue("parent")
 
-	// Safety gate: the device must be a currently-attached USB block device.
-	// This blocks a malicious POST to /api/devices/mmcblk0/format from ever
-	// reaching mkfs. Formatting a blank/unpartitioned USB drive with no
-	// mounted share is allowed.
+	// Safety gate: the device must be a currently-attached USB block device
+	// that the running system doesn't depend on. This blocks a POST to
+	// /api/devices/mmcblk0/format (or a USB-booted Pi's own root disk) from
+	// ever reaching mkfs. A blank drive with no mounted share is fine.
 	dev, err := devices.Get(parent)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	if dev.ReadOnly {
-		writeJSON(w, http.StatusForbidden, map[string]string{
-			"error": "device is read-only (write-protect switch?)",
-		})
+	if !s.requireWritableDevice(w, dev) {
 		return
-	}
-	// If any mounted partition on this device is RO (unlikely on a
-	// write-enabled disk, but possible for iso9660 hybrid layouts), refuse.
-	for _, mn := range s.mgr.Snapshot().Drives {
-		if (mn.Kernel == parent || mn.Parent == parent) && mn.ReadOnly {
-			writeJSON(w, http.StatusForbidden, map[string]string{
-				"error": "at least one partition on this device is read-only",
-			})
-			return
-		}
 	}
 
 	var body struct {
@@ -181,53 +166,26 @@ func (s *Server) handleFormat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
+	release, ok := s.beginOp(w, parent, "format")
+	if !ok {
+		return
+	}
+	defer release()
 
-	s.onBusy(true)
-	defer s.onBusy(false)
-
-	events := make(chan format.Event, 32)
-	go func() {
-		defer close(events)
+	streamOp(s, w, func(emit func(format.Event)) error {
 		err := s.fmtr.Format(context.Background(), format.Request{
-			Parent: parent,
-			FS:     fs,
-			Label:  body.Label,
-		}, func(ev format.Event) {
-			select {
-			case events <- ev:
-			default:
-				// buffer full; drop to keep the format progressing
-			}
-		})
+			Parent:  parent,
+			FS:      fs,
+			Label:   body.Label,
+			Release: release,
+		}, emit)
 		if err != nil {
 			slog.Error("format failed", "parent", parent, "err", err)
-			select {
-			case events <- format.Event{Stage: "error", Message: err.Error()}:
-			default:
-			}
 		}
-	}()
-
-	for ev := range events {
-		data, _ := json.Marshal(ev)
-		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
-			// Client disconnected. Drain remaining events so the goroutine
-			// isn't blocked on send, but stop writing.
-			go func() {
-				for range events {
-				}
-			}()
-			return
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
+		return err
+	}, func(err error) format.Event {
+		return format.Event{Stage: "error", Message: err.Error()}
+	})
 }
 
 // POST /api/devices/{parent}/eject — unmounts every partition of the device
@@ -241,9 +199,8 @@ func (s *Server) handleDeviceEject(w http.ResponseWriter, r *http.Request) {
 	s.onBusy(true)
 	defer s.onBusy(false)
 	if err := s.mgr.Eject(parent); err != nil && !errors.Is(err, mount.ErrNotMounted) {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, ejectStatus(err), map[string]string{"error": err.Error()})
 		return
 	}
-	_ = io.EOF // satisfy unused-import guard when nothing else references it
 	w.WriteHeader(http.StatusNoContent)
 }

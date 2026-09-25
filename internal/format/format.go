@@ -13,7 +13,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
+	"github.com/emdzej/airlock/internal/devices"
 	"github.com/emdzej/airlock/internal/mount"
 )
 
@@ -43,6 +45,10 @@ type Request struct {
 	Parent string
 	FS     Filesystem
 	Label  string // volume label; validated per-fs by mkfs
+	// Release lifts the caller's mount.Manager.BeginOp hold. Format calls
+	// it just before the final udev re-trigger so the manager mounts the
+	// fresh partition. Must be idempotent (BeginOp's is).
+	Release func()
 }
 
 // Event is one progress notification streamed to the client. Stage names are
@@ -64,12 +70,12 @@ func New(mgr *mount.Manager) *Formatter { return &Formatter{mgr: mgr} }
 // Format runs a full format operation, calling progress with each stage.
 // Returns nil on success, error on the first failing step. The Manager will
 // re-mount the new partition via its own udev subscription once we emit the
-// final trigger.
+// final trigger. The caller must hold mgr.BeginOp for req.Parent.
 func (f *Formatter) Format(ctx context.Context, req Request, progress func(Event)) error {
 	if !req.FS.Valid() {
 		return fmt.Errorf("unsupported filesystem: %q", req.FS)
 	}
-	if !isSafeKernelName(req.Parent) {
+	if !devices.ValidKernelName(req.Parent) {
 		return fmt.Errorf("invalid parent device: %q", req.Parent)
 	}
 	emit := func(stage, msg string) {
@@ -80,37 +86,20 @@ func (f *Formatter) Format(ctx context.Context, req Request, progress func(Event
 
 	dev := "/dev/" + req.Parent
 
-	// Quarantine: while we're formatting, ignore udev ADD/CHANGE events
-	// for this device. Otherwise partprobe + fresh partitions cause the
-	// mount manager to auto-mount /dev/<parent>1 while mkfs is trying to
-	// use it exclusively.
-	f.mgr.Quarantine(req.Parent)
-	// Defer removal — but note we also lift it manually before the final
-	// udevadm trigger so the manager sees the new partition.
-	var quarantineLifted bool
-	defer func() {
-		if !quarantineLifted {
-			f.mgr.Unquarantine(req.Parent)
-		}
-	}()
-
-	// 1a. Force Samba to drop any active client sessions on shares that
-	//     live on this device. Without this, smbd holds file descriptors
-	//     open across our umount call, and wipefs later fails with
-	//     "Device or resource busy" trying to open /dev/<parent>.
-	shares := f.sharesForParent(req.Parent)
-	for _, sh := range shares {
-		_, _ = exec.CommandContext(ctx, "smbcontrol", "smbd", "close-share", sh).CombinedOutput()
+	release := req.Release
+	if release == nil {
+		release = func() {}
 	}
 
-	// 1b. Unmount everything on this device we currently own. If nothing
-	//     is mounted (freshly-inserted blank drive) that's fine.
+	// 1. Unmount everything on this device we currently own (the manager
+	//    closes the Samba shares first so smbd doesn't hold the device
+	//    open). If nothing is mounted (blank drive) that's fine.
 	emit("unmount", "unmounting existing partitions on "+dev)
 	if err := f.mgr.Eject(req.Parent); err != nil && !errors.Is(err, mount.ErrNotMounted) {
 		return fmt.Errorf("unmount %s: %w", dev, err)
 	}
 
-	// 1c. Flush all in-flight writes to the block layer. The kernel may
+	//    Flush all in-flight writes to the block layer. The kernel may
 	//     otherwise still be draining dirty pages when we open /dev/<parent>.
 	syscall.Sync()
 
@@ -157,8 +146,7 @@ func (f *Formatter) Format(ctx context.Context, req Request, progress func(Event
 	//    metadata (FS type, UUID, label). Order matters: the quarantine
 	//    must be off *before* we trigger, or the manager will skip the
 	//    new mount.
-	f.mgr.Unquarantine(req.Parent)
-	quarantineLifted = true
+	release()
 	emit("rescan", "triggering udev re-scan")
 	_ = runCmd(ctx, "udevadm", "trigger", "--action=change", partition)
 	_ = runCmd(ctx, "udevadm", "settle")
@@ -176,21 +164,6 @@ func partitionPath(parent string, n int) string {
 		return fmt.Sprintf("%sp%d", base, n)
 	}
 	return fmt.Sprintf("%s%d", base, n)
-}
-
-// isSafeKernelName defends against a user-supplied Parent value pointing at
-// something we don't want to format. Only lowercase letters + digits (matches
-// "sda", "sdb1", "mmcblk0", "nvme0n1", …).
-func isSafeKernelName(name string) bool {
-	if name == "" || len(name) > 32 {
-		return false
-	}
-	for _, r := range name {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
-			return false
-		}
-	}
-	return true
 }
 
 // mkfsCommand returns the (executable, args) tuple for the requested fs.
@@ -221,16 +194,30 @@ func mkfsCommand(fs Filesystem, label, dev string) (string, []string) {
 	case EXT4:
 		args := []string{"-F"}
 		if label != "" {
-			args = append(args, "-L", truncate(label, 16))
+			args = append(args, "-L", truncateBytes(label, 16)) // ext4: 16 bytes
 		}
 		return "mkfs.ext4", append(args, dev)
 	}
 	return "", nil
 }
 
+// truncate shortens s to at most n characters without splitting a UTF-8
+// sequence.
 func truncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}
+
+// truncateBytes shortens s to at most n bytes, backing off to a rune
+// boundary.
+func truncateBytes(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n]
 }
@@ -263,16 +250,4 @@ func runCmdRetry(ctx context.Context, attempts int, delay time.Duration, cmd str
 		}
 	}
 	return last
-}
-
-// sharesForParent returns the airlock share names that belong to the given
-// whole-disk device. Used to close active Samba sessions before formatting.
-func (f *Formatter) sharesForParent(parent string) []string {
-	var out []string
-	for _, d := range f.mgr.Snapshot().Drives {
-		if d.Kernel == parent || d.Parent == parent {
-			out = append(out, d.ShareName)
-		}
-	}
-	return out
 }
