@@ -41,8 +41,8 @@ targets:
         # Informational only — Info.plist carries literal versions
         # (CFBundleVersion == CFBundleShortVersionString, both stamped
         # with the tag by the release workflow).
-        MARKETING_VERSION: "0.4.0"
-        CURRENT_PROJECT_VERSION: "0.4.0"
+        MARKETING_VERSION: "0.4.1"
+        CURRENT_PROJECT_VERSION: "0.4.1"
         # Xcode only accepts major language modes here (5.0 / 6.0);
         # "5.9" is rejected. Matches Package.swift's Swift 5 mode.
         SWIFT_VERSION: "5.0"

@@ -24,7 +24,7 @@ import (
 // The release workflow overrides it via -ldflags "-X main.version=<tag>";
 // local `make` builds pick up the default below. Bump this in lock-step
 // with CHANGELOG.md when tagging a new release.
-var version = "0.4.0"
+var version = "0.4.1"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))

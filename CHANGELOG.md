@@ -6,6 +6,30 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [0.4.1] — 2026-09-25
+
+Release-pipeline patch: the first release whose own tag builds and
+attaches the flashable Raspberry Pi image. No code, API or config
+change against 0.4.0.
+
+### Fixed
+
+- **The pi-gen image is built on a native arm64 runner
+  (`ubuntu-24.04-arm`).** pi-gen's arm64 branch runs `arch-test` inside
+  its build container. Under qemu emulation on the amd64 runner that
+  check failed ("arm64: not supported on this machine/kernel") even
+  with binfmt registered on the host, so the 0.4.0 tag's image job
+  failed. The qemu setup steps are gone.
+- **0.4.0's image was built by a manual re-run** with the fixed
+  workflow and attached afterwards. 0.4.1 ships the image from its own
+  tag.
+
+### Version surfaces
+
+- Daemon `main.version`, companion `CFBundleShortVersionString` /
+  `CFBundleVersion` / `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`:
+  `0.4.1`.
+
 ## [0.4.0] — 2026-09-25
 
 Security and data-safety release that comes out of a full audit of the codebase.
