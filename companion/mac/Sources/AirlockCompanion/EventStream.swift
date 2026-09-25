@@ -11,54 +11,88 @@ import Foundation
 /// Delegate callbacks fire as soon as bytes arrive over the wire.
 /// Frames are `data: <json>\n\n` per SSE spec; `: heartbeat\n\n`
 /// comment lines keep NAT / proxy timers happy.
-final class EventStream: NSObject {
+///
+/// Threading: every mutable property below is only touched on
+/// `stateQueue` (which is also the URLSession delegate queue), so
+/// start/stop/reconnect/delegate callbacks never race. Owner-facing
+/// callbacks are delivered on the main actor, in order, and never
+/// after `stop()` has been processed.
+final class EventStream: NSObject, @unchecked Sendable {
+    typealias DrivesHandler = @MainActor @Sendable ([Drive]) -> Void
+    typealias ConnectedHandler = @MainActor @Sendable () -> Void
+    typealias DisconnectedHandler = @MainActor @Sendable (Error?) -> Void
+
     private let url: URL
-    private let onDrives: ([Drive]) -> Void
-    private let onConnected: () -> Void
-    private let onDisconnected: (Error?) -> Void
+    private let onDrives: DrivesHandler
+    private let onConnected: ConnectedHandler
+    private let onDisconnected: DisconnectedHandler
 
-    /// Delegate lives on this queue; UI callbacks bounce back to main.
-    private let queue: OperationQueue
+    /// Backoff resets to 1 s only after a connection has delivered at
+    /// least one event AND stayed up this long. A server that accepts
+    /// and immediately drops us keeps backing off instead of being
+    /// hammered every second.
+    private let healthyAfter: TimeInterval = 10
 
+    private let stateQueue = DispatchQueue(label: "com.emdzej.airlock.companion.eventstream",
+                                           qos: .utility)
+    private let delegateQueue: OperationQueue
+
+    // --- stateQueue-only state ---
     private var session: URLSession?
     private var task: URLSessionDataTask?
     private var buffer = Data()
     private var backoff: TimeInterval = 1.0
-    private var stopped = false
-    private var didFireConnected = false
+    private var stopped = true
+    private var reconnectWork: DispatchWorkItem?
+    private var connectedAt: Date?
+    private var receivedEvent = false
+    /// Error to report instead of URLSession's generic "cancelled"
+    /// when we reject a response ourselves (non-2xx status).
+    private var responseError: Error?
 
     init(url: URL,
-         onDrives: @escaping ([Drive]) -> Void,
-         onConnected: @escaping () -> Void,
-         onDisconnected: @escaping (Error?) -> Void) {
+         onDrives: @escaping DrivesHandler,
+         onConnected: @escaping ConnectedHandler,
+         onDisconnected: @escaping DisconnectedHandler) {
         self.url = url
         self.onDrives = onDrives
         self.onConnected = onConnected
         self.onDisconnected = onDisconnected
-        self.queue = OperationQueue()
-        self.queue.maxConcurrentOperationCount = 1
-        self.queue.qualityOfService = .utility
+        self.delegateQueue = OperationQueue()
+        self.delegateQueue.maxConcurrentOperationCount = 1
+        self.delegateQueue.underlyingQueue = stateQueue
         super.init()
     }
 
     func start() {
-        stopped = false
-        openConnection()
+        stateQueue.async {
+            guard self.stopped else { return }
+            self.stopped = false
+            self.backoff = 1.0
+            self.openConnection()
+        }
     }
 
+    /// Tear down the stream. No further callbacks are delivered once
+    /// this has run — in particular not the `cancelled` completion the
+    /// teardown itself triggers.
     func stop() {
-        stopped = true
-        task?.cancel()
-        session?.invalidateAndCancel()
-        task = nil
-        session = nil
+        stateQueue.async {
+            self.stopped = true
+            self.reconnectWork?.cancel()
+            self.reconnectWork = nil
+            self.closeConnection()
+        }
     }
 
-    // MARK: - Internal
+    // MARK: - Internal (stateQueue)
 
     private func openConnection() {
+        dispatchPrecondition(condition: .onQueue(stateQueue))
         buffer.removeAll(keepingCapacity: true)
-        didFireConnected = false
+        connectedAt = nil
+        receivedEvent = false
+        responseError = nil
 
         let config = URLSessionConfiguration.default
         // No caching: SSE responses should never be cached.
@@ -68,19 +102,22 @@ final class EventStream: NSObject {
         // (30 s) keeps traffic flowing.
         config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = .infinity
-        // Immediate data delivery — no coalescing on the client side.
-        if #available(macOS 13.4, *) {
-            config.httpAdditionalHeaders = ["Accept": "text/event-stream"]
-        }
 
         var req = URLRequest(url: url)
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
-        let s = URLSession(configuration: config, delegate: self, delegateQueue: queue)
+        let s = URLSession(configuration: config, delegate: self, delegateQueue: delegateQueue)
         session = s
         let t = s.dataTask(with: req)
         task = t
         t.resume()
+    }
+
+    private func closeConnection() {
+        task?.cancel()
+        session?.invalidateAndCancel()
+        task = nil
+        session = nil
     }
 
     /// Schedule a reconnect after `backoff` seconds. Caps at 30 s.
@@ -88,9 +125,23 @@ final class EventStream: NSObject {
         guard !stopped else { return }
         let delay = backoff
         backoff = min(backoff * 2, 30)
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
+        let work = DispatchWorkItem { [weak self] in
             guard let self, !self.stopped else { return }
+            self.reconnectWork = nil
             self.openConnection()
+        }
+        reconnectWork = work
+        stateQueue.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Hop to main and deliver `body` unless the stream was stopped in
+    /// the meantime. `stopped` is re-checked on stateQueue at send time;
+    /// the owner (HostState) additionally drops callbacks from streams
+    /// it has replaced, which covers anything already queued on main.
+    private func deliver(_ body: @escaping @MainActor @Sendable () -> Void) {
+        guard !stopped else { return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { body() }
         }
     }
 
@@ -128,8 +179,10 @@ final class EventStream: NSObject {
             let env = try JSONDecoder().decode(Envelope.self, from: data)
             switch env.type {
             case "drives":
+                receivedEvent = true
                 let drives = env.drives ?? []
-                DispatchQueue.main.async { self.onDrives(drives) }
+                let cb = onDrives
+                deliver { cb(drives) }
             default:
                 break // forward-compat: ignore unknown types
             }
@@ -146,38 +199,49 @@ extension EventStream: URLSessionDataDelegate {
                     dataTask: URLSessionDataTask,
                     didReceive response: URLResponse,
                     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard dataTask === task, !stopped else {
+            completionHandler(.cancel)
+            return
+        }
         guard let http = response as? HTTPURLResponse,
               (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            responseError = NSError(domain: "com.emdzej.airlock.companion.sse", code: code,
+                                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(code)"])
             completionHandler(.cancel)
             return
         }
         completionHandler(.allow)
-        DispatchQueue.main.async { [weak self] in
-            self?.onConnected()
-        }
-        didFireConnected = true
+        connectedAt = Date()
+        let cb = onConnected
+        deliver { cb() }
     }
 
     func urlSession(_ session: URLSession,
                     dataTask: URLSessionDataTask,
                     didReceive data: Data) {
+        guard dataTask === task, !stopped else { return }
         buffer.append(data)
-        // Reset backoff once we're actually receiving payload — not
-        // just a TCP handshake.
-        backoff = 1.0
         drainFrames()
     }
 
     func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     didCompleteWithError error: Error?) {
-        DispatchQueue.main.async { [weak self] in
-            self?.onDisconnected(error)
+        // Completions from a stopped stream or a superseded task are
+        // our own teardown (URLError.cancelled) — not worth reporting.
+        guard task === self.task, !stopped else { return }
+
+        if receivedEvent, let since = connectedAt,
+           Date().timeIntervalSince(since) >= healthyAfter {
+            backoff = 1.0
         }
+        let reported = responseError ?? error
+        let cb = onDisconnected
+        deliver { cb(reported) }
+
         // Clean up this session; a new one is created on reconnect.
-        self.task = nil
-        self.session?.invalidateAndCancel()
-        self.session = nil
+        closeConnection()
         scheduleReconnect()
     }
 }

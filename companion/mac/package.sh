@@ -21,14 +21,22 @@ if [ ! -d "$APP" ]; then
     exit 1
 fi
 
-# Pull version from Info.plist (CFBundleShortVersionString).
-VERSION="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || echo 0.1.0)"
+# Pull version from Info.plist (CFBundleShortVersionString). The release
+# workflow stamps the tag into Info.plist before build.sh, so a missing
+# value means something upstream broke — fail rather than ship a DMG
+# with a made-up version.
+VERSION="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || true)"
+if [ -z "$VERSION" ]; then
+    echo "Couldn't read CFBundleShortVersionString from $APP/Contents/Info.plist" >&2
+    exit 1
+fi
 
 DMG_STAGE="build/dmg-stage"
 DMG_OUT="build/AirlockCompanion-${VERSION}.dmg"
 
-# Clean previous stage.
+# Clean previous stage; always remove it on exit, even on failure.
 rm -rf "$DMG_STAGE" "$DMG_OUT"
+trap 'rm -rf "$DMG_STAGE"' EXIT
 mkdir -p "$DMG_STAGE"
 
 # App + drag-to-install symlink so the DMG opens with an obvious install
@@ -42,8 +50,6 @@ hdiutil create \
     -srcfolder "$DMG_STAGE" \
     -ov -format UDZO \
     "$DMG_OUT" >/dev/null
-
-rm -rf "$DMG_STAGE"
 
 echo
 echo "DMG ready: $(pwd)/$DMG_OUT"

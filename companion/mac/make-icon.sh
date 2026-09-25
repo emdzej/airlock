@@ -15,7 +15,6 @@ cd "$(dirname "$0")"
 
 SVG=assets/AppIcon.svg
 OUT=assets/AppIcon.icns
-STAGE=assets/AppIcon.iconset
 
 if [ ! -f "$SVG" ]; then
     echo "Missing $SVG" >&2
@@ -26,7 +25,11 @@ if ! command -v rsvg-convert >/dev/null; then
     exit 1
 fi
 
-rm -rf "$STAGE" "$OUT"
+# Render into a temp dir and only replace the committed .icns once
+# iconutil has succeeded — a failed run leaves the old icon intact.
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+STAGE="$TMP/AppIcon.iconset"   # iconutil requires the .iconset suffix
 mkdir -p "$STAGE"
 
 # Standard iconset sizes for Finder / Dock / Launchpad / Info window.
@@ -38,7 +41,7 @@ for base in 16 32 128 256 512; do
     rsvg-convert -w "$x2" -h "$x2" "$SVG" -o "$STAGE/icon_${base}x${base}@2x.png"
 done
 
-iconutil -c icns "$STAGE" -o "$OUT"
-rm -rf "$STAGE"
+iconutil -c icns "$STAGE" -o "$TMP/AppIcon.icns"
+mv "$TMP/AppIcon.icns" "$OUT"
 
 echo "Generated: $OUT ($(du -h "$OUT" | cut -f1))"

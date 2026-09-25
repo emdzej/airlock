@@ -8,6 +8,7 @@ import Foundation
 /// State is stored as a single JSON blob under UserDefaults key
 /// `knownHosts`. Small: even a dozen airlocks with 4 drives each is
 /// well under 4 KB.
+@MainActor
 final class HostStore {
     struct Persisted: Codable {
         let serviceName: String
@@ -37,11 +38,13 @@ final class HostStore {
         defaults.set(data, forKey: key)
     }
 
-    /// Prune entries older than `pruneAfter` seconds. Called from
-    /// AppDelegate on launch — cheap enough to run every start.
+    /// Prune entries older than `pruneAfter` seconds, including ones
+    /// that never came online (`lastSeen == .distantPast`) — Bonjour
+    /// re-adds them if they're still around. Called from
+    /// Discovery.start() on launch — cheap enough to run every start.
     func prune() {
         let cutoff = Date().addingTimeInterval(-pruneAfter)
-        let kept = load().filter { $0.lastSeen >= cutoff || $0.lastSeen == .distantPast }
+        let kept = load().filter { $0.lastSeen >= cutoff }
         save(kept)
     }
 }

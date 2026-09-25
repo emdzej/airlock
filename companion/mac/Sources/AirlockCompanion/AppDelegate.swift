@@ -2,11 +2,13 @@ import AppKit
 
 /// Menu-bar shell. Owns the NSStatusItem, discovery, mount manager,
 /// and action center; wires them together on launch.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let discovery = Discovery()
     private let mounts = MountManager()
     private lazy var actions = ActionCenter(discovery: discovery, mounts: mounts)
+    private var changePending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -22,12 +24,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Rebuild the menu whenever discovery / local mounts change.
         // Order: (1) reconcile ejected drives (unmount stale locals),
         // then (2) auto-mount any newly-appeared drives, then (3)
-        // rebuild the menu with the final state.
+        // rebuild the menu with the final state. Deferred to the next
+        // main-queue turn and coalesced, so a burst of changes (and
+        // changes caused by the steps themselves) runs this once.
         let onChange: () -> Void = { [weak self] in
-            DispatchQueue.main.async {
-                self?.actions.reconcileEjected()
-                self?.actions.maybeAutoMount()
-                self?.rebuildMenu()
+            guard let self, !self.changePending else { return }
+            self.changePending = true
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.changePending = false
+                    self.actions.reconcileEjected()
+                    self.actions.maybeAutoMount()
+                    self.rebuildMenu()
+                }
             }
         }
         discovery.onChange = onChange

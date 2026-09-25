@@ -2,6 +2,7 @@ import AppKit
 
 /// Renders the current discovery state into an NSMenu, wiring
 /// selectors to methods on the shared ActionCenter.
+@MainActor
 enum MenuBuilder {
 
     // MARK: - Header composition
@@ -60,6 +61,9 @@ enum MenuBuilder {
 
     static func build(into menu: NSMenu, hosts: [HostState],
                       mounts: MountManager, actions: ActionCenter) {
+        // We set isEnabled explicitly; auto-enabling would override it
+        // (every item whose target responds to its action is enabled).
+        menu.autoenablesItems = false
         if hosts.isEmpty {
             let empty = NSMenuItem(title: "Looking for airlock instances…",
                                    action: nil, keyEquivalent: "")
@@ -104,7 +108,8 @@ enum MenuBuilder {
             let mounted = mounts.isMounted(host: host, drive: drive)
             let mark = mounted ? "✓ " : "   "
             let ro = drive.readOnly ? " · RO" : ""
-            let title = "\(mark)\(drive.displayName) (\(drive.fsType), \(drive.sizeHuman))\(ro)"
+            let ejecting = drive.ejecting ? " · ejecting…" : ""
+            let title = "\(mark)\(drive.displayName) (\(drive.fsType), \(drive.sizeHuman))\(ro)\(ejecting)"
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.submenu = submenu
             menu.addItem(item)
@@ -135,6 +140,7 @@ enum MenuBuilder {
                                           mounts: MountManager,
                                           actions: ActionCenter) -> NSMenu {
         let sub = NSMenu()
+        sub.autoenablesItems = false
         let ctx = DriveContext(host: host, drive: drive)
         let isMounted = mounts.isMounted(host: host, drive: drive)
 
@@ -158,6 +164,7 @@ enum MenuBuilder {
                                    keyEquivalent: "")
             mount.target = actions
             mount.representedObject = ctx
+            mount.isEnabled = !drive.ejecting
             sub.addItem(mount)
 
             let mountOpen = NSMenuItem(title: "Mount and Open in Finder",
@@ -165,6 +172,7 @@ enum MenuBuilder {
                                        keyEquivalent: "")
             mountOpen.target = actions
             mountOpen.representedObject = ctx
+            mountOpen.isEnabled = !drive.ejecting
             sub.addItem(mountOpen)
         }
 
@@ -182,6 +190,7 @@ enum MenuBuilder {
                                keyEquivalent: "")
         eject.target = actions
         eject.representedObject = ctx
+        eject.isEnabled = !drive.ejecting
         sub.addItem(eject)
 
         return sub

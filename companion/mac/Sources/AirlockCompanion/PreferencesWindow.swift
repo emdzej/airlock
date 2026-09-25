@@ -4,6 +4,7 @@ import SwiftUI
 /// Preferences window controller. Kept trivially small: one toggle
 /// for auto-mount. Persisted through @AppStorage so the UI stays in
 /// sync with any other reader of the same defaults key.
+@MainActor
 final class PreferencesWindowController {
     private var window: NSWindow?
 

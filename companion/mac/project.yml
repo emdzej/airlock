@@ -26,31 +26,23 @@ targets:
     type: application
     platform: macOS
     sources:
+      # main.swift is the entry point for both SwiftPM and Xcode (no
+      # @main on AppDelegate), so it must stay in the target.
       - path: Sources/AirlockCompanion
-        excludes:
-          # main.swift for SwiftPM double-defines NSApp entry; the
-          # Xcode target uses AppDelegate via @main-less setup below.
-          - "main.swift"
       - path: assets/AppIcon.icns
         buildPhase: resources
-    info:
-      path: Info.plist
-      properties:
-        CFBundleName: Airlock
-        CFBundleDisplayName: Airlock Companion
-        CFBundleIdentifier: com.emdzej.airlock.companion
-        CFBundleShortVersionString: "0.3.1"
-        CFBundleVersion: "1"
-        CFBundleIconFile: AppIcon
-        LSMinimumSystemVersion: "13.0"
-        LSUIElement: true
-        NSBonjourServices:
-          - "_airlock._tcp"
-        NSLocalNetworkUsageDescription: "Airlock Companion discovers airlock devices on your local network via Bonjour and queries them for connected drives."
-        NSPrincipalClass: NSApplication
+    # Use the committed Info.plist as-is. No `info:` block — with one,
+    # XcodeGen regenerates (overwrites) the plist from its properties
+    # and the two copies drift.
     settings:
       base:
-        MARKETING_VERSION: "0.3.1"
-        CURRENT_PROJECT_VERSION: "1"
-        SWIFT_VERSION: "5.9"
+        INFOPLIST_FILE: Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        # Informational only — Info.plist carries literal versions
+        # (CFBundleVersion == CFBundleShortVersionString, both stamped
+        # with the tag by the release workflow).
+        MARKETING_VERSION: "0.3.1"
+        CURRENT_PROJECT_VERSION: "0.3.1"
+        # Xcode only accepts major language modes here (5.0 / 6.0);
+        # "5.9" is rejected. Matches Package.swift's Swift 5 mode.
+        SWIFT_VERSION: "5.0"

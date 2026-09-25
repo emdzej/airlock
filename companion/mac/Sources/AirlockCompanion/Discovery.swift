@@ -3,6 +3,12 @@ import Foundation
 /// Browses the local network for `_airlock._tcp` advertisements and
 /// keeps a list of hosts (currently-live + remembered-offline).
 /// Each host has its own SSE-driven event stream via HostState.
+///
+/// Hosts are keyed by Bonjour service name. That's unique on a LAN:
+/// the Pi advertises via Avahi, which renames on conflict
+/// ("airlock #2"), so two boxes with the same hostname still show
+/// up as distinct services.
+@MainActor
 final class Discovery: NSObject {
     private let browser = NetServiceBrowser()
     private var pending: [NetService] = []
@@ -44,35 +50,32 @@ final class Discovery: NSObject {
         }
         store.save(items)
     }
-}
 
-extension Discovery: NetServiceBrowserDelegate {
-    func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+    private func found(_ service: NetService) {
         pending.append(service)
         service.delegate = self
         service.resolve(withTimeout: 5.0)
     }
 
-    func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
+    private func removed(name: String) {
         // Mark the host as offline; don't drop from the list — it may
-        // come back (Pi rebooted, briefly off Wi-Fi). Persistent store
-        // (HostStore) prunes truly-gone hosts on its own schedule.
-        if let host = hosts.first(where: { $0.serviceName == service.name }) {
+        // come back (Pi rebooted, briefly off Wi-Fi). HostStore prunes
+        // truly-gone hosts on the next launch.
+        if let host = hosts.first(where: { $0.serviceName == name }) {
             host.stopEventStream()
         }
         onChange?()
     }
-}
 
-extension Discovery: NetServiceDelegate {
-    func netServiceDidResolveAddress(_ service: NetService) {
+    private func resolved(_ service: NetService) {
         pending.removeAll { $0 === service }
         guard let host = service.hostName else { return }
         let hostname = host.hasSuffix(".") ? String(host.dropLast()) : host
         let port = service.port > 0 ? service.port : 80
         if let existing = hosts.first(where: { $0.serviceName == service.name }) {
-            // Persisted offline entry — refresh its hostname/port in
-            // case the network moved the box, then reconnect.
+            // Persisted offline entry or a repeat resolve — refresh
+            // hostname/port in case the network moved the box. Both
+            // calls are no-ops when nothing changed / already live.
             existing.updateEndpoint(hostname: hostname, port: port)
             existing.startEventStream()
             persist()
@@ -87,7 +90,35 @@ extension Discovery: NetServiceDelegate {
         onChange?()
     }
 
-    func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
-        pending.removeAll { $0 === sender }
+    private func failedToResolve(_ service: NetService) {
+        pending.removeAll { $0 === service }
+    }
+}
+
+// NetService delivers callbacks on the run loop it was scheduled on —
+// the main one, since start() runs on main — so hopping into the main
+// actor synchronously is safe. NetService isn't Sendable; the
+// nonisolated(unsafe) rebinding tells the checker we never leave main.
+extension Discovery: NetServiceBrowserDelegate {
+    nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+        nonisolated(unsafe) let service = service
+        MainActor.assumeIsolated { found(service) }
+    }
+
+    nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
+        let name = service.name
+        MainActor.assumeIsolated { removed(name: name) }
+    }
+}
+
+extension Discovery: NetServiceDelegate {
+    nonisolated func netServiceDidResolveAddress(_ service: NetService) {
+        nonisolated(unsafe) let service = service
+        MainActor.assumeIsolated { resolved(service) }
+    }
+
+    nonisolated func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+        nonisolated(unsafe) let sender = sender
+        MainActor.assumeIsolated { failedToResolve(sender) }
     }
 }
