@@ -30,7 +30,7 @@ features:
   - title: Handles the ugly filesystems
     details: FAT32, exFAT, NTFS, and ext4 read-write. HFS+ read-only. Format and relabel from the browser without ever touching a shell.
   - title: Physical eject
-    details: A GPIO push button on the Pi safely unmounts and powers down the port. A status LED shows mount state at a glance.
+    details: A GPIO push button on the Pi safely unmounts every drive — and refuses, rather than lazy-unmounting, while a file is still open. A status LED shows mount state at a glance.
 ---
 
 <style>

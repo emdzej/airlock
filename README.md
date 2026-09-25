@@ -67,9 +67,17 @@ Not designed for enterprise / managed / DLP-controlled networks. See the
 
 ## Quick start
 
+**Fresh SD card** — from 0.4.0 every release ships a flashable image,
+`airlock-<version>-linux-arm64.img.xz`. Flash it with Raspberry Pi Imager
+and use its OS customisation to set your SSH public key (password SSH is
+off by default) and Wi-Fi. See [Flash the image](docs/install.md#flash-the-image).
+
 **On an existing Raspberry Pi** (Bookworm or Trixie, 64-bit) — one line:
 
     curl -fsSL https://github.com/emdzej/airlock/releases/latest/download/install.sh | sudo bash
+
+Options go after `sudo` (it resets the environment), e.g.
+`… | sudo AIRLOCK_HARDEN_USB=1 bash`.
 
 Once done: open `http://<hostname>.local/` in a browser, or connect via
 `smb://<hostname>.local/` from Finder / Explorer / Files.
@@ -92,8 +100,8 @@ GPIO wiring, uninstall, and troubleshooting.
 - `internal/gpio/` — button + LED via `/dev/gpiochip0`
 - `internal/api/` — HTTP server + embedded status page
 - `image/pi-gen/` — custom pi-gen stage (`stage-airlock/`)
-- `scripts/install.sh` — installer for an existing Raspberry Pi
-- `.github/workflows/` — CI (build/test) and Release (tag → binaries)
+- `scripts/install.sh` — installer for an existing Raspberry Pi (installs the config files from `image/pi-gen/stage-airlock` via the release bundle)
+- `.github/workflows/` — CI (build/test/lint), Release (tag → binaries, bundle, image, DMG) and the docs site
 - `CHANGELOG.md` — release notes
 - `docs/` — [user guide](docs/guide.md), [install guide](docs/install.md), [backlog](docs/backlog.md)
 
@@ -102,6 +110,8 @@ GPIO wiring, uninstall, and troubleshooting.
     make airlockd            # host binary (for editor/CI use — daemon is Linux-only)
     make airlockd-arm64      # cross-compile for Pi 4
     make image               # build the full pi-gen image (Linux + docker)
+    make test                # go test -race
+    make lint                # gofmt check + go vet + shellcheck
 
 ## Support
 

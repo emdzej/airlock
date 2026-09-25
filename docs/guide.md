@@ -77,11 +77,16 @@ Each row is a partition that is currently mounted and shared.
 | Filesystem · size | Read-only info |
 | `smb://host/share` (linked) | Click to open your OS's file manager on that share (works on macOS/Linux/Firefox; Chrome/Edge may prompt or block on Windows) |
 | **Copy** button | Copies the platform-appropriate path — `\\host\share` on Windows, `smb://host/share` elsewhere |
-| **Eject** | Unmounts every partition of the same physical device (safe to yank after) |
+| **Eject** | Unmounts every partition of the same physical device (safe to yank after it disappears) |
 | **Eject all** (top) | Same, but for every mounted drive |
 
-Ejecting drops the SMB share immediately; any client sessions will see
-the share disappear and can reconnect once you (re)plug the drive.
+Ejecting withdraws the SMB share first, then unmounts. Client sessions
+see the share disappear and can reconnect once you (re)plug the drive.
+If a file on the drive is still open — an SMB client mid-copy, a
+download in progress — the unmount fails with a **busy** error and the
+drive **stays mounted** (Airlock never lazy-unmounts, which would report
+success while data is still in flight). Finish or cancel the transfer
+and eject again.
 
 ## The Devices tab
 
@@ -188,7 +193,10 @@ share on the Mounts tab within a couple of seconds.
 **Safety guards:**
 
 - Only USB-attached devices can be targeted — the Pi's own boot SD
-  can never appear here.
+  can never appear here, and neither can a USB disk the OS itself runs
+  from (anything backing `/`, `/boot/firmware` or swap).
+- One operation per device at a time: a second format / flash / dump /
+  fsck on the same device is refused as busy.
 - Refused if any partition is currently marked read-only (write-protect
   switch tripped, etc.).
 - During the format the daemon quarantines the target, so a race where
@@ -313,7 +321,8 @@ normal.
 
 ### Safety guards
 
-- Only USB devices can be targeted (never the Pi's own SD)
+- Only USB devices can be targeted (never the Pi's own SD, nor a USB
+  disk the OS boots from)
 - Refused if any partition on the device is read-only
 - Refused if the raw (uncompressed) upload is bigger than the target
 - Device is quarantined during the flash so partial partition tables
@@ -346,6 +355,13 @@ from your primary machine. In practice:
   execute, gain privileges, or open a device node on the Pi. And it
   never runs on your laptop directly.
 - Airlock never auto-runs anything from the media.
+- The disk the OS runs from is off-limits: the daemon refuses to list,
+  format, flash, dump or mount anything backing `/`, `/boot/firmware`
+  or swap.
+- The web UI has no login, so it rejects cross-site `POST` / `DELETE`
+  requests (a web page you visit can't format a drive) and requests
+  with an unexpected `Host` header (DNS rebinding). SMB is limited to
+  LAN address ranges.
 - **BadUSB / USB Rubber Ducky** devices (a stick that pretends to be a
   keyboard) plug into a headless Pi with no interactive session to
   type into. On your laptop the same device would type into whatever
@@ -358,8 +374,9 @@ PDF or macro-laden Office document is Airlock's cargo, not its concern.
 Endpoint hygiene (AV, Gatekeeper on macOS, SmartScreen on Windows,
 whatever's on your machine) still matters.
 
-For the two optional tightening layers — USB device-class blocklist
-and read-only root — see the [installation guide](/install#additional-hardening).
+For the full list, and the two optional tightening layers — USB
+device-class blocklist and read-only root — see the
+[installation guide](/install#additional-hardening-optional).
 
 ## Troubleshooting
 
@@ -367,8 +384,19 @@ and read-only root — see the [installation guide](/install#additional-hardenin
 
 Confirm Avahi is running: `systemctl status avahi-daemon` on the Pi.
 If your network filters mDNS (some corporate Wi-Fi does), use the
-IP directly: `http://192.168.x.y/`. The IP shows up in the daemon's
-startup log — `journalctl -u airlockd | grep listening`.
+IP directly: `http://192.168.x.y/`. Find it with `hostname -I` on the
+Pi, or in your router's DHCP client list. (The daemon's startup log
+only shows the listen address, `addr=":80"`, not the IP.)
+
+### Web UI says `421` or `403`
+
+- `421 unrecognised Host header` — you reached the Pi via a DNS name
+  that isn't `.local` / `.lan` / `.home.arpa` / … or an IP. Add it to
+  `AIRLOCK_ALLOWED_HOSTS` (see the
+  [installation guide](/install#additional-hardening-optional)).
+- `403 cross-origin request refused` — the browser flagged the request
+  as coming from another site. Open the UI directly at
+  `http://<host>.local/` and retry.
 
 ### Web UI works but SMB shows no shares
 

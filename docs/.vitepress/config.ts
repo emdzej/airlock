@@ -63,11 +63,11 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'User guide', link: '/guide' },
-          { text: 'Web UI', link: '/guide#the-web-ui' },
-          { text: 'SMB from Finder/Explorer', link: '/guide#smb' },
+          { text: 'Web UI', link: '/guide#from-the-web-ui' },
+          { text: 'SMB from Finder/Explorer', link: '/guide#from-macos-finder' },
           { text: 'macOS companion app', link: '/companion' },
-          { text: 'Format · flash · dump · fsck', link: '/guide#device-tools' },
-          { text: 'Physical eject button', link: '/guide#physical-eject-button' },
+          { text: 'Format · flash · dump · fsck', link: '/guide#formatting-a-drive' },
+          { text: 'Physical eject button', link: '/guide#physical-eject-button-led-optional' },
         ],
       },
       {

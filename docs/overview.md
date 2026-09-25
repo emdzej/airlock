@@ -42,7 +42,7 @@ PDF or a macro-laden Excel document is Airlock's cargo, not its
 concern. Endpoint hygiene (AV, sandbox, Gatekeeper, whatever you have
 on the receiving side) still matters. Airlock is the isolation
 chamber; it's not a scanner. See the
-[install guide](/install#additional-hardening) for the full posture
+[install guide](/install#additional-hardening-optional) for the full posture
 and the two optional tightening levels.
 
 ## What's in the box
@@ -85,7 +85,8 @@ Airlock is a headless appliance — you use it through:
               │           │              │    /api/events for companions)   │
               │           │              └─▶ GPIO button + LED status       │
               │           │                                                 │
-              │       /run/airlock/*     mount state, dynamic smb.conf      │
+              │           ├─▶ /mnt/airlock/<share>  (mounts)                │
+              │           └─▶ /etc/samba/smb.conf.d/airlock.conf            │
               │                                                             │
    Bonjour ◀──┼── avahi-daemon advertises _smb._tcp + _airlock._tcp         │
               │                                                             │
@@ -97,8 +98,8 @@ Samba and Avahi. Everything else is standard OS.
 
 ## Where to go next
 
-- [**Install on a Pi**](/install) — one-line installer for existing
-  Raspberry Pi OS Lite systems, or build the full pi-gen image.
+- [**Install on a Pi**](/install) — flash the ready-made image, or
+  use the one-line installer on an existing Raspberry Pi OS Lite system.
 - [**User guide**](/guide) — day-to-day usage: browse, format, flash,
   dump, fsck, relabel, GPIO button.
 - [**macOS companion app**](/companion) — install the menu-bar
