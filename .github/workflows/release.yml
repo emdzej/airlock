@@ -129,7 +129,10 @@ jobs:
     # The release job creates the release; attaching here afterwards
     # avoids three jobs racing to create it.
     needs: release
-    runs-on: ubuntu-latest
+    # Native arm64 runner: pi-gen's arm64 branch only fully supports a
+    # native build environment, and under qemu emulation its arch-test
+    # check fails inside the build container.
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     permissions:
       contents: write
@@ -155,35 +158,6 @@ jobs:
           go-version-file: go.mod
           check-latest: true
           cache: true
-
-      # pi-gen's build-docker.sh (arm64 branch) runs `which qemu-aarch64`
-      # on the HOST (not inside the container) before starting the build.
-      # On the amd64 runner that means we need two things:
-      #
-      #   1. The `qemu-aarch64` binary itself on the host filesystem —
-      #      from `qemu-user`, pulled in by `qemu-user-binfmt`.
-      #      `docker/setup-qemu-action` alone doesn't put it there; it
-      #      only registers binfmt_misc handlers via a privileged Docker
-      #      container. (Not qemu-user-static: it replaces
-      #      qemu-user-binfmt and only ships qemu-aarch64-static.)
-      #
-      #   2. binfmt_misc registered for the ELF/aarch64 magic bytes so the
-      #      kernel actually hands arm64 binaries to qemu. The apt install
-      #      registers these via `binfmt-support`, but we still keep the
-      #      setup-qemu-action step as a belt-and-braces guarantee across
-      #      any base-image drift on ubuntu-latest.
-      - name: Install qemu-user-binfmt on the runner
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            qemu-user qemu-user-binfmt binfmt-support
-          which qemu-aarch64
-          qemu-aarch64 --version | head -1
-
-      - name: Register QEMU binfmt handlers (belt & braces)
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
 
       # build.sh pins pi-gen (PIGEN_REF) and cross-compiles airlockd via
       # `make airlockd-arm64`, which stamps $VERSION into the binary.

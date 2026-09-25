@@ -5,7 +5,8 @@
 # Requirements (Linux host, or macOS with Docker Desktop):
 #   - docker (pi-gen builds inside a container)
 #   - git, go (to cross-compile airlockd)
-#   - on an x86_64 host: qemu-user-binfmt (pi-gen checks for qemu-aarch64)
+#   - an arm64 host is strongly preferred; on x86_64, pi-gen needs
+#     qemu-user-binfmt and its emulated build is not reliable
 #
 # Usage:
 #   ./image/pi-gen/build.sh
