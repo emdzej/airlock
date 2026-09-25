@@ -6,6 +6,183 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [0.4.0] — 2026-09-25
+
+Security and data-safety release that comes out of a full audit of the codebase.
+Upgrading is strongly recommended. Nothing in the API was removed: eject
+calls can now return `409` when a drive is busy, and drive objects gain an
+`ejecting` field.
+
+### Security
+
+- **Symlinks on a drive can no longer reach outside it.** Every file
+  operation now goes through Go's `os.Root`, so the kernel checks each
+  path component. Before, only downloads checked symlinks. A drive with
+  `x -> /etc` could be used to list, upload into, rename or delete files
+  anywhere on the Pi, as root.
+- **Cross-site request forgery and DNS rebinding are blocked.** Any web
+  page opened on the LAN could POST to the unauthenticated API, for
+  example to format a drive. Now:
+  - Cross-origin POST/DELETE requests are rejected with `403`, using
+    Go's `http.CrossOriginProtection`.
+  - Requests whose `Host` isn't an IP, a single-label name or a LAN
+    suffix (`.local`, `.lan`, `.home.arpa`, …) are rejected with `421`.
+  - Extra names can be allowed with `AIRLOCK_ALLOWED_HOSTS`.
+  - curl and the companion app send no browser headers and aren't
+    affected.
+- **The OS disk is refused.** A disk that backs `/`, `/boot/firmware`,
+  overlayroot's lower dir, any other mount outside `/mnt/airlock`, or
+  active swap is left out of the device list. It can't be formatted,
+  flashed, dumped or auto-mounted, which protects a Pi booted from a USB
+  SSD. Flash also opens the device with `O_EXCL` as a last line of
+  defence.
+- **Reserved Samba names are escaped.** A drive labelled `GLOBAL`,
+  `homes` or `printers` can no longer inject a Samba `[global]` (or
+  other reserved) section. It gets a `-<kernel>` suffix instead.
+- **Relabel rejects labels starting with `-`.** These were parsed as
+  options by `ntfslabel` and friends.
+- **FIFOs on a drive can't hang the daemon.** A named pipe on the drive
+  no longer blocks a download forever.
+- **Image: SSH is key-only by default.** Pi Imager customisation works
+  again: cloud-init is no longer disabled. SSH host keys survive reboots
+  on the read-only root.
+- **systemd unit hardening, still without a mount namespace:**
+  - syscall filter;
+  - capability bounding set;
+  - `MemoryDenyWriteExecute`;
+  - `ProtectHostname`.
+- **Samba requires SMB3.** NetBIOS is disabled and access is limited
+  to private, link-local and ULA address ranges.
+- **`install.sh` verifies downloads.** Everything it downloads is
+  checked against the published `.sha256`.
+- **Build provenance.** Release artifacts ship with build provenance
+  attestations.
+
+### Fixed — data safety
+
+- **Eject never reports "safe to remove" while data is still in flight.**
+  - The share is withdrawn from Samba first, so macOS can't reconnect.
+  - Samba's file handles are closed and the unmount is retried.
+  - If a file is still open, eject returns `409` and the drive stays
+    mounted. It used to fall back to `umount -l` and report success.
+  - Lazy unmount is now used only when the device has already been
+    physically removed.
+- **Only one operation runs on a disk at a time.** Format, flash, fsck,
+  relabel and dump each take a per-disk lock; a second one returns
+  `409`. The disk is quarantined for the whole operation, and a mount
+  that was already in progress is waited for, so it can't land
+  mid-`mkfs`.
+- **fsck and relabel touch only the target partition.** They unmount just
+  that partition (siblings stay mounted) and keep the daemon from
+  re-mounting it mid-repair.
+- **Flashing an `.xz` image:**
+  - A failed write no longer hangs forever.
+  - A corrupt or truncated `.xz` now fails instead of reporting `done`.
+- **A failed upload no longer deletes the file it was overwriting.**
+  Uploads are written to a temp file and renamed into place.
+- **Operations outlive a closed browser tab.** A running format, flash
+  or fsck keeps going, and so does its busy LED, until it finishes.
+  Progress events are no longer dropped. airlockd waits for running
+  operations on shutdown instead of killing them (`TimeoutStopSec=1h`).
+- **Drive-change updates are delivered in order.** Out-of-order delivery
+  could leave `smb.conf` or the UI showing a drive that was already
+  gone. The SSE stream now drops the oldest queued update rather than
+  the newest.
+- **Restarts are quick with the web UI open.** An open event stream no
+  longer stalls shutdown for 10 s.
+- **ext4 labels are limited to 16 bytes, not 16 characters.** Multi-byte
+  labels are also truncated on a UTF-8 boundary.
+- **fsck check mode says "errors found".** It used to report "errors
+  corrected" for exit code 1.
+
+### Fixed — image, installer, release
+
+- **The pi-gen image is really 64-bit now.** It's built from pi-gen's
+  `arm64` branch, pinned to a tag. `master` had been silently building
+  armhf.
+- **Releases attach the right image.** The job used to pick up stock Pi
+  OS Lite by mistake (the image build had failed on 0.3.0 and 0.3.1).
+  0.4.0 is the first release meant to ship a flashable
+  `airlock-<tag>-linux-arm64.img.xz`.
+- **`install.sh` installs its config from the release bundle.** The
+  config can no longer drift from the image. Machines set up with the
+  installer now advertise `_airlock._tcp`, so the companion finds them.
+  The installer also works under `curl | bash` and honours
+  `AIRLOCK_PREFIX` in the unit.
+- **Documented `AIRLOCK_X=1 curl … | sudo -E bash` one-liners are
+  corrected.** They never passed the flag through; the docs now use
+  `curl … | sudo AIRLOCK_X=1 bash`.
+- **Release workflow:**
+  - Jobs no longer race to create the release.
+  - Manual runs build the tag, not `main`.
+  - `.sha256` files hold bare filenames.
+  - The bundle and `install.sh` now get checksums.
+
+### Fixed — macOS companion
+
+- **Auto-mount:**
+  - It no longer re-mounts a drive you just unmounted or ejected.
+  - It no longer tries offline hosts or starts duplicate mounts.
+  - It backs off after failures.
+  - It skips drives that are ejecting.
+- **Eject:**
+  - Eject aborts if the local unmount fails (open files) rather than
+    pulling the drive out from under the Mac. The daemon's busy
+    message is shown.
+  - Eject all waits for every local unmount first.
+- **Offline hosts show "offline · last seen …"** instead of a red
+  "cancelled".
+- **The event stream:**
+  - It's thread-safe.
+  - It reports HTTP errors properly.
+  - It backs off correctly on a flapping server.
+- **Mounting never shows an auth dialog.**
+- **Mount state is read without blocking the main thread.**
+- **The DMG is a universal binary** (arm64 + x86_64).
+- **Build fixes:**
+  - `swift run` no longer crashes.
+  - The XcodeGen project has an entry point again.
+- **Clean under Swift 6 strict concurrency.**
+- **Notifications:**
+  - They show while the app is active.
+  - A failed permission request no longer blocks asking again later.
+- **Copy SMB URL** percent-encodes the share name.
+
+### Changed
+
+- **Toolchains:**
+  - Go 1.22 → 1.27, and `golang.org/x/sys` v0.18 → v0.48.
+  - Node 20 → 24 for the docs site.
+  - `npm audit fix` in `docs/`.
+- **All GitHub Actions bumped to current majors.** Third-party actions
+  are pinned to a commit SHA.
+- **CI now runs:**
+  - `gofmt`, `go vet` and `go test -race`;
+  - `shellcheck` on every script;
+  - `testparm` on the Samba config.
+- **Tests for every daemon package.** They cover symlink escapes on
+  every file operation, the cross-origin and Host guards, the op lock,
+  system-disk detection, udev parsing, Samba rendering, and
+  mkfs/fsck/label commands.
+- **Duplicated device/partition lookups, device-name checks and
+  filesystem-name mappers merged; dead code removed.**
+- **Every API error is a JSON `{"error": …}` body.**
+- **Docs:**
+  - Stale pages were updated.
+  - Broken anchors were fixed.
+  - A "Flash the image" section was added.
+  - The companion README was rewritten.
+
+### Version surfaces
+
+- **Daemon:** `main.version` is `0.4.0`.
+- **Companion:** `CFBundleShortVersionString`, `CFBundleVersion`,
+  `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are `0.4.0`.
+- **Installer:** installing an older version with
+  `AIRLOCK_VERSION=0.3.x` needs that release's own `install.sh`. Those
+  releases publish no bundle checksum, and the new installer refuses
+  to install unverified files.
+
 ## [0.3.1] — 2026-07-14
 
 Patch release: shipping the companion with a proper app icon so it
