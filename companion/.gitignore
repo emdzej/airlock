@@ -1,0 +1,8 @@
+# Build output and generated Xcode projects for every companion (mac, ios)
+# and the shared AirlockKit package. Projects come from project.yml (XcodeGen).
+.build/
+build/
+*.xcodeproj/
+DerivedData/
+.swiftpm/
+Package.resolved

@@ -9,13 +9,13 @@ import Foundation
 /// `knownHosts`. Small: even a dozen airlocks with 4 drives each is
 /// well under 4 KB.
 @MainActor
-final class HostStore {
-    struct Persisted: Codable {
-        let serviceName: String
-        var hostname: String
-        var port: Int
-        var lastSeen: Date
-        var cachedDrives: [Drive]
+public final class HostStore {
+    public struct Persisted: Codable {
+        public let serviceName: String
+        public var hostname: String
+        public var port: Int
+        public var lastSeen: Date
+        public var cachedDrives: [Drive]
     }
 
     private let defaults = UserDefaults.standard
@@ -26,14 +26,14 @@ final class HostStore {
     /// airlock instances on many networks.
     private let pruneAfter: TimeInterval = 30 * 24 * 3600
 
-    static let shared = HostStore()
+    public static let shared = HostStore()
 
-    func load() -> [Persisted] {
+    public func load() -> [Persisted] {
         guard let data = defaults.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([Persisted].self, from: data)) ?? []
     }
 
-    func save(_ items: [Persisted]) {
+    public func save(_ items: [Persisted]) {
         guard let data = try? JSONEncoder().encode(items) else { return }
         defaults.set(data, forKey: key)
     }
@@ -42,7 +42,7 @@ final class HostStore {
     /// that never came online (`lastSeen == .distantPast`) — Bonjour
     /// re-adds them if they're still around. Called from
     /// Discovery.start() on launch — cheap enough to run every start.
-    func prune() {
+    public func prune() {
         let cutoff = Date().addingTimeInterval(-pruneAfter)
         let kept = load().filter { $0.lastSeen >= cutoff }
         save(kept)

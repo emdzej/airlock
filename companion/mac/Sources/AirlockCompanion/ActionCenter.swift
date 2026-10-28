@@ -1,5 +1,7 @@
 import AppKit
+import AirlockKit
 import Foundation
+import AirlockKit
 
 /// Objective-C-compatible target that NSMenuItem selectors dispatch
 /// to. Holds references to everything the menu actions need.

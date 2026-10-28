@@ -17,10 +17,10 @@ import Foundation
 /// start/stop/reconnect/delegate callbacks never race. Owner-facing
 /// callbacks are delivered on the main actor, in order, and never
 /// after `stop()` has been processed.
-final class EventStream: NSObject, @unchecked Sendable {
-    typealias DrivesHandler = @MainActor @Sendable ([Drive]) -> Void
-    typealias ConnectedHandler = @MainActor @Sendable () -> Void
-    typealias DisconnectedHandler = @MainActor @Sendable (Error?) -> Void
+public final class EventStream: NSObject, @unchecked Sendable {
+    public typealias DrivesHandler = @MainActor @Sendable ([Drive]) -> Void
+    public typealias ConnectedHandler = @MainActor @Sendable () -> Void
+    public typealias DisconnectedHandler = @MainActor @Sendable (Error?) -> Void
 
     private let url: URL
     private let onDrives: DrivesHandler
@@ -33,14 +33,14 @@ final class EventStream: NSObject, @unchecked Sendable {
     /// hammered every second.
     private let healthyAfter: TimeInterval = 10
 
-    private let stateQueue = DispatchQueue(label: "com.emdzej.airlock.companion.eventstream",
+    private let stateQueue = DispatchQueue(label: "pl.emdzej.airlock.kit.eventstream",
                                            qos: .utility)
     private let delegateQueue: OperationQueue
 
     // --- stateQueue-only state ---
     private var session: URLSession?
     private var task: URLSessionDataTask?
-    private var buffer = Data()
+    private var parser = SSEParser()
     private var backoff: TimeInterval = 1.0
     private var stopped = true
     private var reconnectWork: DispatchWorkItem?
@@ -50,7 +50,7 @@ final class EventStream: NSObject, @unchecked Sendable {
     /// when we reject a response ourselves (non-2xx status).
     private var responseError: Error?
 
-    init(url: URL,
+    public init(url: URL,
          onDrives: @escaping DrivesHandler,
          onConnected: @escaping ConnectedHandler,
          onDisconnected: @escaping DisconnectedHandler) {
@@ -64,7 +64,7 @@ final class EventStream: NSObject, @unchecked Sendable {
         super.init()
     }
 
-    func start() {
+    public func start() {
         stateQueue.async {
             guard self.stopped else { return }
             self.stopped = false
@@ -76,7 +76,7 @@ final class EventStream: NSObject, @unchecked Sendable {
     /// Tear down the stream. No further callbacks are delivered once
     /// this has run — in particular not the `cancelled` completion the
     /// teardown itself triggers.
-    func stop() {
+    public func stop() {
         stateQueue.async {
             self.stopped = true
             self.reconnectWork?.cancel()
@@ -89,7 +89,7 @@ final class EventStream: NSObject, @unchecked Sendable {
 
     private func openConnection() {
         dispatchPrecondition(condition: .onQueue(stateQueue))
-        buffer.removeAll(keepingCapacity: true)
+        parser.reset()
         connectedAt = nil
         receivedEvent = false
         responseError = nil
@@ -145,30 +145,6 @@ final class EventStream: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Parse whatever complete `data: ...\n\n` frames are in `buffer`
-    /// and drop them from the buffer. Partial frames stay for next chunk.
-    private func drainFrames() {
-        while let separator = buffer.range(of: Data("\n\n".utf8)) {
-            let raw = buffer.subdata(in: 0..<separator.lowerBound)
-            buffer.removeSubrange(0..<separator.upperBound)
-            guard let frame = String(data: raw, encoding: .utf8) else { continue }
-
-            var dataLines: [String] = []
-            for line in frame.split(separator: "\n", omittingEmptySubsequences: false) {
-                let s = String(line)
-                if s.hasPrefix(":") { continue }
-                if s.hasPrefix("data:") {
-                    var payload = String(s.dropFirst("data:".count))
-                    if payload.first == " " { payload = String(payload.dropFirst()) }
-                    dataLines.append(payload)
-                }
-                // Other SSE fields (event:, id:, retry:) — none used here.
-            }
-            if dataLines.isEmpty { continue }
-            handleEvent(dataLines.joined(separator: "\n"))
-        }
-    }
-
     private func handleEvent(_ json: String) {
         guard let data = json.data(using: .utf8) else { return }
         struct Envelope: Decodable {
@@ -195,7 +171,7 @@ final class EventStream: NSObject, @unchecked Sendable {
 }
 
 extension EventStream: URLSessionDataDelegate {
-    func urlSession(_ session: URLSession,
+    public func urlSession(_ session: URLSession,
                     dataTask: URLSessionDataTask,
                     didReceive response: URLResponse,
                     completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
@@ -206,7 +182,7 @@ extension EventStream: URLSessionDataDelegate {
         guard let http = response as? HTTPURLResponse,
               (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            responseError = NSError(domain: "com.emdzej.airlock.companion.sse", code: code,
+            responseError = NSError(domain: "pl.emdzej.airlock.kit.sse", code: code,
                                     userInfo: [NSLocalizedDescriptionKey: "HTTP \(code)"])
             completionHandler(.cancel)
             return
@@ -217,15 +193,14 @@ extension EventStream: URLSessionDataDelegate {
         deliver { cb() }
     }
 
-    func urlSession(_ session: URLSession,
+    public func urlSession(_ session: URLSession,
                     dataTask: URLSessionDataTask,
                     didReceive data: Data) {
         guard dataTask === task, !stopped else { return }
-        buffer.append(data)
-        drainFrames()
+        for payload in parser.feed(data) { handleEvent(payload) }
     }
 
-    func urlSession(_ session: URLSession,
+    public func urlSession(_ session: URLSession,
                     task: URLSessionTask,
                     didCompleteWithError error: Error?) {
         // Completions from a stopped stream or a superseded task are

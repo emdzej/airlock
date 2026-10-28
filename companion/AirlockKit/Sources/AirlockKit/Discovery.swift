@@ -9,18 +9,20 @@ import Foundation
 /// ("airlock #2"), so two boxes with the same hostname still show
 /// up as distinct services.
 @MainActor
-final class Discovery: NSObject {
+public final class Discovery: NSObject, ObservableObject {
     private let browser = NetServiceBrowser()
     private var pending: [NetService] = []
-    private(set) var hosts: [HostState] = []
+    @Published public private(set) var hosts: [HostState] = []
 
     /// Called whenever the host list or any host's drive list changes.
     /// Fires on the main queue — safe to touch UI directly.
-    var onChange: (() -> Void)?
+    public var onChange: (() -> Void)?
 
     private let store = HostStore.shared
 
-    func start() {
+    public override init() { super.init() }
+
+    public func start() {
         // Restore previously-seen hosts as offline placeholders — the
         // Bonjour resolve callback flips them back to live if the
         // service reappears.
@@ -35,6 +37,22 @@ final class Discovery: NSObject {
         onChange?()
 
         browser.delegate = self
+        browser.searchForServices(ofType: "_airlock._tcp.", inDomain: "local.")
+    }
+
+    /// Going to the background (iOS): drop the streams and the browser —
+    /// the OS would kill their sockets anyway, and a stream reconnecting
+    /// on its own after resume can sit in a 30 s backoff.
+    public func suspend() {
+        browser.stop()
+        for host in hosts { host.stopEventStream() }
+        pending.removeAll()
+    }
+
+    /// Back in the foreground: browse again. Bonjour re-reports live
+    /// services, and each resolve restarts its host's stream.
+    public func resume() {
+        browser.stop()
         browser.searchForServices(ofType: "_airlock._tcp.", inDomain: "local.")
     }
 
@@ -100,24 +118,24 @@ final class Discovery: NSObject {
 // actor synchronously is safe. NetService isn't Sendable; the
 // nonisolated(unsafe) rebinding tells the checker we never leave main.
 extension Discovery: NetServiceBrowserDelegate {
-    nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
+    public nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
         nonisolated(unsafe) let service = service
         MainActor.assumeIsolated { found(service) }
     }
 
-    nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
+    public nonisolated func netServiceBrowser(_ browser: NetServiceBrowser, didRemove service: NetService, moreComing: Bool) {
         let name = service.name
         MainActor.assumeIsolated { removed(name: name) }
     }
 }
 
 extension Discovery: NetServiceDelegate {
-    nonisolated func netServiceDidResolveAddress(_ service: NetService) {
+    public nonisolated func netServiceDidResolveAddress(_ service: NetService) {
         nonisolated(unsafe) let service = service
         MainActor.assumeIsolated { resolved(service) }
     }
 
-    nonisolated func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
+    public nonisolated func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
         nonisolated(unsafe) let sender = sender
         MainActor.assumeIsolated { failedToResolve(sender) }
     }

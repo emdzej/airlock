@@ -21,6 +21,10 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
 
+packages:
+  AirlockKit:
+    path: ../AirlockKit
+
 targets:
   AirlockCompanion:
     type: application
@@ -34,6 +38,8 @@ targets:
     # Use the committed Info.plist as-is. No `info:` block — with one,
     # XcodeGen regenerates (overwrites) the plist from its properties
     # and the two copies drift.
+    dependencies:
+      - package: AirlockKit
     settings:
       base:
         INFOPLIST_FILE: Info.plist

@@ -1,4 +1,5 @@
 import AppKit
+import AirlockKit
 
 /// Menu-bar shell. Owns the NSStatusItem, discovery, mount manager,
 /// and action center; wires them together on launch.

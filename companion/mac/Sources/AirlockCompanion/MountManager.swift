@@ -1,5 +1,7 @@
 import Foundation
+import AirlockKit
 import AppKit
+import AirlockKit
 import NetFS
 
 /// Tracks local SMB mounts of airlock shares. Mounts go through

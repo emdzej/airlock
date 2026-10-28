@@ -1,4 +1,5 @@
 import AppKit
+import AirlockKit
 
 /// Renders the current discovery state into an NSMenu, wiring
 /// selectors to methods on the shared ActionCenter.
