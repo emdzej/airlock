@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Merged with the keys generated from project.yml's INFOPLIST_KEY_* settings. -->
+    <!-- Bonjour browsing for airlockd's service (required since iOS 14). -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_airlock._tcp</string>
+    </array>
+    <!-- airlockd speaks plain HTTP on the LAN: allow it for local hosts
+         (.local names, private and link-local IPs) only. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,88 @@
+# XcodeGen spec for the Airlock iOS/iPadOS app. The .xcodeproj is
+# generated (and gitignored), as for the Mac companion.
+#
+# Generate:   xcodegen            (brew install xcodegen)
+# Open:       open AirlockMobile.xcodeproj
+# Simulator:  xcodebuild -scheme AirlockMobile -destination 'generic/platform=iOS Simulator' build
+
+name: AirlockMobile
+
+options:
+  bundleIdPrefix: pl.emdzej.airlock
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  AirlockKit:
+    path: ../AirlockKit
+
+targets:
+  AirlockMobile:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/AirlockMobile
+      - path: Resources
+    dependencies:
+      - package: AirlockKit
+      - target: AirlockFiles
+    entitlements:
+      path: AirlockMobile.entitlements
+      properties:
+        com.apple.security.application-groups: [group.pl.emdzej.airlock]
+    settings:
+      base:
+        PRODUCT_NAME: Airlock
+        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock
+        DEVELOPMENT_TEAM: A2WT9CD8P3
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "0.4.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # The generated Info.plist is merged with Info.plist, which holds
+        # what build settings can't express (arrays, dictionaries).
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Airlock
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Airlock discovers airlock devices on your local network via Bonjour and manages their drives.
+        # App Store: no non-exempt encryption (plain HTTP on the LAN).
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+
+  # File Provider extension: each shared drive as a location in Files.
+  AirlockFiles:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/AirlockFiles
+    dependencies:
+      - package: AirlockKit
+      - sdk: FileProvider.framework
+    entitlements:
+      path: AirlockFiles.entitlements
+      properties:
+        com.apple.security.application-groups: [group.pl.emdzej.airlock]
+    settings:
+      base:
+        PRODUCT_NAME: AirlockFiles
+        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock.files
+        DEVELOPMENT_TEAM: A2WT9CD8P3
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "0.4.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Files-Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Airlock
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Airlock reaches drives shared by airlock devices on your local network.
+        SKIP_INSTALL: YES
