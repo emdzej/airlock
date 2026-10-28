@@ -6,6 +6,49 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [0.5.0] — 2026-10-28
+
+Native apps release: an iOS/iPadOS app, and a Mac companion that now
+does everything the web UI does. No daemon or API change against 0.4.1.
+
+### Added
+
+- **iOS and iPadOS app** (iOS 17+, `companion/ios`): discovery, live
+  drives, eject; devices with format, flash from Files, dump to Files,
+  eject; partitions with mount, relabel and fsck; a file browser; and a
+  **Files app extension** that shows each shared drive as a location in
+  Files. Not on the App Store yet; TestFlight comes first.
+- **Mac companion window** (**Open Airlock…**, ⌘O in the menu): the same
+  screens as the iOS app, with the device tools (Format, Flash Image,
+  Save Image, Eject) in the toolbar. Opens on first launch.
+- **Forget an airlock** you no longer use, in both apps and in the Mac
+  menu. It comes back if it's still on the network.
+- **Setup steps** when no airlock is found: set one up on a Pi, same
+  network, Local Network permission, try `http://airlock.local`.
+- **About** with version, guide and source links.
+- **`AirlockKit` / `AirlockUI`** (`companion/AirlockKit`): the Swift
+  package both apps share — models, HTTP client, SSE, discovery, and the
+  SwiftUI screens.
+
+### Changed
+
+- **The Mac companion needs macOS 14 (Sonoma)** or later (was 13).
+- **The Mac DMG is signed with a Developer ID and notarised**, so it
+  opens with a double-click: no more `xattr -dr com.apple.quarantine`.
+  `companion/mac/sign.sh` and `package.sh` do it; the release workflow
+  signs in CI once the signing secrets are configured.
+- **New icon and look** across the apps and the site: the airlock hatch,
+  the app's greens, a faint hatch watermark. The menu-bar icon is the
+  hatch.
+- **Site:** an Apps page with screenshots; the theme colours finally
+  apply (the site was VitePress blue).
+
+### Version surfaces
+
+- Daemon `main.version`, companion `CFBundleShortVersionString` /
+  `CFBundleVersion` / `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION`,
+  iOS `MARKETING_VERSION`: `0.5.0`.
+
 ## [0.4.1] — 2026-09-25
 
 Release-pipeline patch: the first release whose own tag builds and
