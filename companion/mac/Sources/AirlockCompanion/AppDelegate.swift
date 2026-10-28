@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // First launch: open the window, so the setup steps (no airlock
         // yet) and the full feature set aren't hidden behind the menu.
         let defaults = UserDefaults.standard
-        if !defaults.bool(forKey: "launchedBefore") || CommandLine.arguments.contains("--open-window") {
+        if !defaults.bool(forKey: "launchedBefore") {
             defaults.set(true, forKey: "launchedBefore")
             actions.mainWindow.show()
         }
