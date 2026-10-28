@@ -21,109 +21,150 @@ struct HostView: View {
         _devices = StateObject(wrappedValue: DevicesModel(client: host.client))
     }
 
+    // Split into small pieces: older compilers (Xcode 16, the release
+    // runner's) time out type-checking one long body.
     var body: some View {
+        chrome(lifecycle(list))
+    }
+
+    private var list: some View {
         List {
-            Section {
-                HostHeader(host: host, devices: devices.devices)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-            }
-
-            Section("Drives") {
-                if host.drives.isEmpty {
-                    EmptyRow(systemImage: "externaldrive.badge.plus",
-                             text: host.isReachable ? "Plug in a USB drive or card" : "No drives seen yet")
-                }
-                ForEach(host.drives) { drive in
-                    NavigationLink {
-                        FileBrowserView(client: host.client, drive: drive)
-                    } label: {
-                        DriveCard(drive: drive, busy: busy.contains(drive.id),
-                                  canEject: host.isReachable) { eject(drive) }
-                    }
-                    .swipeActions {
-                        Button("Eject", systemImage: "eject") { eject(drive) }
-                            .tint(.orange)
-                    }
-                    .contextMenu {
-                        Button("Eject", systemImage: "eject") { eject(drive) }
-                        Button("Copy SMB URL", systemImage: "doc.on.doc") {
-                            Pasteboard.copy(smbURL(drive))
-                        }
-                    }
-                    .disabled(!host.isReachable || drive.ejecting)
-                }
-            }
-
-            Section("Devices") {
-                if let err = devices.loadError, devices.devices.isEmpty {
-                    EmptyRow(systemImage: "exclamationmark.triangle", text: err)
-                } else if devices.loaded, devices.devices.isEmpty {
-                    EmptyRow(systemImage: "cable.connector", text: "No USB devices attached")
-                }
-                ForEach(devices.devices) { device in
-                    NavigationLink {
-                        DeviceView(host: host, model: devices, name: device.name)
-                    } label: {
-                        DeviceRow(device: device)
-                    }
-                }
-            }
+            headerSection
+            drivesSection
+            devicesSection
         }
         .airlockBackground()
         .macTransparentToolbar()
         .animation(.default, value: host.drives)
         .animation(.default, value: devices.devices)
-        .refreshable { await devices.refresh() }
-        .onReceive(NotificationCenter.default.publisher(for: .airlockRefresh)) { _ in
-            Task { await devices.refresh() }
+    }
+
+    private var headerSection: some View {
+        Section {
+            HostHeader(host: host, devices: devices.devices)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
         }
-        .onAppear { if scenePhase.isForeground { devices.startPolling() } }
-        .onChange(of: scenePhase) { _, phase in
-            if phase.isForeground { devices.startPolling() } else { devices.stopPolling() }
+    }
+
+    private var drivesSection: some View {
+        Section("Drives") {
+            if host.drives.isEmpty {
+                EmptyRow(systemImage: "externaldrive.badge.plus",
+                         text: host.isReachable ? "Plug in a USB drive or card" : "No drives seen yet")
+            }
+            ForEach(host.drives) { drive in
+                driveRow(drive)
+            }
         }
-        // A drive appearing or going usually means a device changed too.
-        .onChange(of: host.drives) { _, _ in Task { await devices.refresh() } }
-        .navigationTitle(host.serviceName)
-        .inlineNavigationTitle()
-        .toolbar {
-            // The header card shows the name; the title stays for the
-            // back button on pushed screens.
-            #if os(iOS)
-            ToolbarItem(placement: .principal) { Text("").accessibilityHidden(true) }
-            #endif
-            ToolbarItem(placement: .trailingAction) {
-                Menu {
-                    Button("Eject All", systemImage: "eject") { confirmEjectAll = true }
-                        .disabled(!host.isReachable || host.drives.isEmpty)
-                    Link(destination: host.baseURL) {
-                        Label("Open Web UI", systemImage: "safari")
-                    }
-                    Divider()
-                    Link(destination: Links.guide) {
-                        Label("User Guide", systemImage: "book")
-                    }
-                    Button("About Airlock", systemImage: "info.circle") { showAbout = true }
-                    if let forget {
-                        Divider()
-                        Button("Forget This Airlock", systemImage: "trash", role: .destructive, action: forget)
-                    }
+    }
+
+    private func driveRow(_ drive: Drive) -> some View {
+        NavigationLink {
+            FileBrowserView(client: host.client, drive: drive)
+        } label: {
+            DriveCard(drive: drive, busy: busy.contains(drive.id),
+                      canEject: host.isReachable) { eject(drive) }
+        }
+        .swipeActions {
+            Button("Eject", systemImage: "eject") { eject(drive) }
+                .tint(.orange)
+        }
+        .contextMenu {
+            Button("Eject", systemImage: "eject") { eject(drive) }
+            Button("Copy SMB URL", systemImage: "doc.on.doc") {
+                Pasteboard.copy(smbURL(drive))
+            }
+        }
+        .disabled(!host.isReachable || drive.ejecting)
+    }
+
+    private var devicesSection: some View {
+        Section("Devices") {
+            if let err = devices.loadError, devices.devices.isEmpty {
+                EmptyRow(systemImage: "exclamationmark.triangle", text: err)
+            } else if devices.loaded, devices.devices.isEmpty {
+                EmptyRow(systemImage: "cable.connector", text: "No USB devices attached")
+            }
+            ForEach(devices.devices) { device in
+                NavigationLink {
+                    DeviceView(host: host, model: devices, name: device.name)
                 } label: {
-                    Label("More", systemImage: "ellipsis.circle")
+                    DeviceRow(device: device)
                 }
             }
         }
-        .sheet(isPresented: $showAbout) { AboutView().sheetFrame(width: 440) }
-        .confirmationDialog("Eject every drive on \(host.serviceName)?",
-                            isPresented: $confirmEjectAll, titleVisibility: .visible) {
-            Button("Eject All", role: .destructive, action: ejectAll)
+    }
+
+    /// Polling and refresh triggers.
+    private func lifecycle(_ content: some View) -> some View {
+        content
+            .refreshable { await devices.refresh() }
+            .onReceive(NotificationCenter.default.publisher(for: .airlockRefresh)) { _ in
+                Task { await devices.refresh() }
+            }
+            .onAppear { if scenePhase.isForeground { devices.startPolling() } }
+            .onChange(of: scenePhase) { _, phase in
+                if phase.isForeground { devices.startPolling() } else { devices.stopPolling() }
+            }
+            // A drive appearing or going usually means a device changed too.
+            .onChange(of: host.drives) { _, _ in Task { await devices.refresh() } }
+    }
+
+    /// Title, toolbar menu, sheets and alerts.
+    private func chrome(_ content: some View) -> some View {
+        content
+            .navigationTitle(host.serviceName)
+            .inlineNavigationTitle()
+            .toolbar { toolbarContent }
+            .sheet(isPresented: $showAbout) { AboutView().sheetFrame(width: 440) }
+            .confirmationDialog("Eject every drive on \(host.serviceName)?",
+                                isPresented: $confirmEjectAll, titleVisibility: .visible) {
+                Button("Eject All", role: .destructive, action: ejectAll)
+            }
+            .alert("Couldn't eject", isPresented: failureShown) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(failure ?? "")
+            }
+            .sensoryFeedback(.error, trigger: failure) { _, new in new != nil }
+    }
+
+    private var failureShown: Binding<Bool> {
+        Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        // The header card shows the name; the title stays for the back
+        // button on pushed screens.
+        #if os(iOS)
+        ToolbarItem(placement: .principal) { Text("").accessibilityHidden(true) }
+        #endif
+        ToolbarItem(placement: .trailingAction) {
+            moreMenu
         }
-        .alert("Couldn't eject", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(failure ?? "")
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("Eject All", systemImage: "eject") { confirmEjectAll = true }
+                .disabled(!host.isReachable || host.drives.isEmpty)
+            Link(destination: host.baseURL) {
+                Label("Open Web UI", systemImage: "safari")
+            }
+            Divider()
+            Link(destination: Links.guide) {
+                Label("User Guide", systemImage: "book")
+            }
+            Button("About Airlock", systemImage: "info.circle") { showAbout = true }
+            if let forget {
+                Divider()
+                Button("Forget This Airlock", systemImage: "trash", role: .destructive, action: forget)
+            }
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
         }
-        .sensoryFeedback(.error, trigger: failure) { _, new in new != nil }
     }
 
     private func smbURL(_ drive: Drive) -> String {
