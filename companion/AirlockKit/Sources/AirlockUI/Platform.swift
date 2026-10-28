@@ -119,6 +119,12 @@ final class KeepAwake {
     #endif
 }
 
+extension Notification.Name {
+    /// Reload what isn't live (device list, open folder): posted by the
+    /// Mac companion's View › Refresh (⌘R).
+    public static let airlockRefresh = Notification.Name("pl.emdzej.airlock.refresh")
+}
+
 extension ToolbarItemPlacement {
     /// The trailing edge on both platforms: `.primaryAction` is trailing
     /// on iOS but leading or centred in a Mac window's toolbar.

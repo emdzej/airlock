@@ -75,6 +75,9 @@ struct HostView: View {
         .animation(.default, value: host.drives)
         .animation(.default, value: devices.devices)
         .refreshable { await devices.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .airlockRefresh)) { _ in
+            Task { await devices.refresh() }
+        }
         .onAppear { if scenePhase.isForeground { devices.startPolling() } }
         .onChange(of: scenePhase) { _, phase in
             if phase.isForeground { devices.startPolling() } else { devices.stopPolling() }

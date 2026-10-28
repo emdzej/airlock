@@ -68,6 +68,9 @@ struct FileBrowserView: View {
         }
         .task { await load() }
         .refreshable { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .airlockRefresh)) { _ in
+            Task { await load() }
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result { upload(urls) }
         }

@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.image?.isTemplate = true
         }
         rebuildMenu()
+        MainMenu.install(actions: actions)
 
         // Rebuild the menu whenever discovery / local mounts change.
         // Order: (1) reconcile ejected drives (unmount stale locals),
