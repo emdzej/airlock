@@ -19,7 +19,9 @@ export default defineConfig({
   metaChunk: true,
 
   head: [
-    ['meta', { name: 'theme-color', content: '#3aa675' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
+    ['link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }],
+    ['meta', { name: 'theme-color', content: '#2e8a62' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Airlock' }],
     ['meta', { property: 'og:title', content: 'Airlock — mass storage over the network' }],
@@ -33,6 +35,7 @@ export default defineConfig({
 
   themeConfig: {
     siteTitle: 'Airlock',
+    logo: '/logo.svg',
 
     nav: [
       { text: 'Overview', link: '/overview' },

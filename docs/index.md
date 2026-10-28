@@ -7,6 +7,10 @@ hero:
   name: Airlock
   text: Mass storage over the network
   tagline: Plug a USB drive, SD card, or external SSD into a Raspberry Pi 4. It appears on your LAN over SMB and HTTP within seconds.
+  image:
+    light: /hatch-light.svg
+    dark: /hatch-dark.svg
+    alt: The Airlock hatch
   actions:
     - theme: brand
       text: Get started
@@ -32,13 +36,3 @@ features:
   - title: Physical eject
     details: A GPIO push button on the Pi safely unmounts every drive — and refuses, rather than lazy-unmounting, while a file is still open. A status LED shows mount state at a glance.
 ---
-
-<style>
-:root {
-  --vp-c-brand-1: #3aa675;
-  --vp-c-brand-2: #55c093;
-  --vp-c-brand-3: #6fd3aa;
-  --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(120deg, #3aa675 30%, #7ed5c1);
-}
-</style>

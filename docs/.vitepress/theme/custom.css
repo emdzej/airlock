@@ -1,0 +1,86 @@
+/*
+ * Airlock look, shared with the iOS app: the app icon's greens, a faint
+ * mint wash at the top, and the hatch as a large, barely visible
+ * watermark off the bottom-right corner.
+ */
+
+:root {
+  --vp-c-brand-1: #2e8a62;
+  --vp-c-brand-2: #379e72;
+  --vp-c-brand-3: #4cc38f;
+  --vp-c-brand-soft: rgba(76, 195, 143, 0.14);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #2e8a62 25%, #4cc38f);
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(76, 195, 143, 0.35), rgba(76, 195, 143, 0) 65%);
+  --vp-home-hero-image-filter: blur(56px);
+
+  --airlock-wash: rgba(76, 195, 143, 0.10);
+  --airlock-watermark-opacity: 0.05;
+}
+
+.dark {
+  --vp-c-brand-1: #4cc38f;
+  --vp-c-brand-2: #3fb07f;
+  --vp-c-brand-3: #2e8a62;
+  --vp-c-brand-soft: rgba(76, 195, 143, 0.16);
+
+  --airlock-wash: rgba(76, 195, 143, 0.12);
+  --airlock-watermark-opacity: 0.07;
+}
+
+/* Background layers sit behind everything and never take clicks. */
+.Layout::before,
+.Layout::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Mint wash fading out towards the middle of the viewport. */
+.Layout::before {
+  inset: 0 0 50% 0;
+  background: linear-gradient(to bottom, var(--airlock-wash), transparent);
+}
+
+/* The hatch, masked so it takes the brand colour in both themes. */
+.Layout::after {
+  width: 90vmax;
+  height: 90vmax;
+  right: -38vmax;
+  bottom: -38vmax;
+  background-color: var(--vp-c-brand-1);
+  -webkit-mask: url('/hatch-mask.svg') center / contain no-repeat;
+  mask: url('/hatch-mask.svg') center / contain no-repeat;
+  opacity: var(--airlock-watermark-opacity);
+}
+
+/* Let the layers show through the page; the nav and sidebar keep theirs. */
+.Layout,
+.VPContent,
+.VPHome,
+.VPDoc {
+  background: transparent;
+}
+.Layout {
+  isolation: isolate;
+}
+
+/* Feature cards: a touch of glass over the watermark. */
+.VPFeature {
+  background-color: color-mix(in srgb, var(--vp-c-bg-soft) 82%, transparent) !important;
+  backdrop-filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .VPHero .image-src {
+    animation: airlock-hatch-settle 1.4s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+  }
+}
+
+/* The hero hatch turns a quarter and locks, like the app's wheel. */
+@keyframes airlock-hatch-settle {
+  from { transform: translate(-50%, -50%) rotate(-90deg); opacity: 0; }
+  to   { transform: translate(-50%, -50%) rotate(0deg); opacity: 1; }
+}
