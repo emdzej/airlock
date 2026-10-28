@@ -5,15 +5,16 @@
 # Requires: `build.sh` to have run first (so build/AirlockCompanion.app
 # exists). Output: build/AirlockCompanion-<version>.dmg
 #
-# The DMG contains an ad-hoc-signed but un-notarized .app. First
-# launch on another Mac requires stripping the download's quarantine
-# attribute — see the printed instructions at the bottom. Proper
-# signing / notarization is a follow-up (needs an Apple Developer
-# Account).
+# If sign.sh has signed the app with the Developer ID, the DMG is signed,
+# notarised and stapled too (configuration: see signing.sh). Otherwise
+# (ad-hoc build) it isn't, and first launch on another Mac needs the
+# download's quarantine attribute stripped — see the printed instructions.
 
 set -euo pipefail
 
 cd "$(dirname "$0")"
+# shellcheck source=/dev/null  # signing.sh, linted on its own
+source ./signing.sh
 
 APP="build/AirlockCompanion.app"
 if [ ! -d "$APP" ]; then
@@ -51,12 +52,27 @@ hdiutil create \
     -ov -format UDZO \
     "$DMG_OUT" >/dev/null
 
+if has_developer_id "$APP"; then
+    echo ">>> codesign DMG ($SIGN_ID)"
+    codesign --force --timestamp --sign "$SIGN_ID" "$DMG_OUT"
+    if [ "${NOTARIZE:-1}" != 0 ]; then
+        echo ">>> notarytool (DMG)"
+        notarize "$DMG_OUT"
+        xcrun stapler staple "$DMG_OUT"
+        spctl --assess --type open --context context:primary-signature -vv "$DMG_OUT"
+    fi
+    SIGNED=1
+fi
+
 echo
 echo "DMG ready: $(pwd)/$DMG_OUT"
 echo "Size: $(du -h "$DMG_OUT" | cut -f1)"
-echo
-echo "First-run on another Mac:"
-echo "  1. Drag AirlockCompanion.app to /Applications."
-echo "  2. If macOS says the app is 'damaged', run:"
-echo "       xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app"
-echo "  3. Launch it. Subsequent runs work with no prompts."
+if [ -z "${SIGNED:-}" ]; then
+    echo
+    echo "Ad-hoc signed (run ./sign.sh before this to sign and notarise)."
+    echo "First-run on another Mac:"
+    echo "  1. Drag AirlockCompanion.app to /Applications."
+    echo "  2. If macOS says the app is 'damaged', run:"
+    echo "       xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app"
+    echo "  3. Launch it. Subsequent runs work with no prompts."
+fi

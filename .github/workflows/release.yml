@@ -209,10 +209,36 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    env:
+      # Developer ID signing + notarisation, only when the secrets exist;
+      # otherwise the DMG ships ad-hoc signed as before.
+      SIGNING: ${{ secrets.MACOS_CERT_P12 != '' && secrets.NOTARY_KEY_P8 != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Import Developer ID certificate and notary key
+        if: env.SIGNING == 'true'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PW="$(openssl rand -base64 24)"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PW" "$KC" >/dev/null
+          # Search the temporary keychain first, keep the runner's own.
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KC"
+          printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          echo "NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
 
       - name: Set version in Info.plist to release tag
         working-directory: companion/mac
@@ -224,8 +250,19 @@ jobs:
         working-directory: companion/mac
         run: ./build.sh
 
+      - name: Sign and notarise app
+        if: env.SIGNING == 'true'
+        working-directory: companion/mac
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: ./sign.sh
+
       - name: Package DMG
         working-directory: companion/mac
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
         run: ./package.sh
 
       - name: Rename DMG to tag
@@ -253,3 +290,9 @@ jobs:
           files: |
             companion/mac/build/AirlockCompanion-${{ env.TAG }}.dmg
             companion/mac/build/AirlockCompanion-${{ env.TAG }}.dmg.sha256
+
+      - name: Remove signing keychain and notary key
+        if: always() && env.SIGNING == 'true'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/notary.p8"

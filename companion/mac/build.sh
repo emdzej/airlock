@@ -46,8 +46,7 @@ printf '%s' 'APPL????' > "$APP/Contents/PkgInfo"
 #
 # The bundle has no nested code (frameworks, helpers), so signing the
 # bundle itself covers the main executable — no deprecated `--deep`.
-# When we eventually get an Apple Developer ID, swap `-` for the
-# team identity and add `--options runtime` for notarization.
+# For distribution, sign.sh re-signs with the Developer ID and notarises.
 echo ">>> codesign (ad-hoc)"
 codesign --force --sign - "$APP"
 codesign --verify --strict --verbose=1 "$APP"
