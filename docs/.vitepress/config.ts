@@ -106,7 +106,7 @@ export default defineConfig({
     footer: {
       message:
         'Released under the <a href="https://github.com/emdzej/airlock/blob/main/LICENSE">MIT License</a>.',
-      copyright: 'Copyright © 2026 <a href="https://emdzej.pl">emdzej</a>',
+      copyright: 'Copyright © 2026 <a href="https://emdzej.pl">Michał Jaskolski</a>',
     },
 
     outline: {
