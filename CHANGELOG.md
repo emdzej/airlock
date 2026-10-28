@@ -26,6 +26,9 @@ does everything the web UI does. No daemon or API change against 0.4.1.
 - **Setup steps** when no airlock is found: set one up on a Pi, same
   network, Local Network permission, try `http://airlock.local`.
 - **About** with version, guide and source links.
+- **Standard Mac shortcuts** in the companion's windows: ⌘Q, ⌘W, ⌘M,
+  ⌘H, ⌘, (Settings), ⌘O, the edit shortcuts, ⌘R (refresh), ⌃⌘S
+  (sidebar), ⌃⌘F (full screen) and ⌘? (guide).
 - **`AirlockKit` / `AirlockUI`** (`companion/AirlockKit`): the Swift
   package both apps share — models, HTTP client, SSE, discovery, and the
   SwiftUI screens.
