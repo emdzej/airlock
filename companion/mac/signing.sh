@@ -26,7 +26,9 @@ notarize() {
     echo "$out" | tail -4
     if [[ "$out" != *"status: Accepted"* ]]; then
         sub="$(echo "$out" | sed -n 's/^ *id: //p' | head -1)"
-        [ -n "$sub" ] && xcrun notarytool log "$sub" "${NOTARY_AUTH[@]}" >&2 || true
+        if [ -n "$sub" ]; then
+            xcrun notarytool log "$sub" "${NOTARY_AUTH[@]}" >&2 || true
+        fi
         echo "notarisation failed: $1" >&2
         return 1
     fi
