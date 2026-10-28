@@ -25,8 +25,8 @@ hero:
 features:
   - title: Plug and share
     details: Insert any USB thumb drive, SD card, or external SSD — Airlock auto-mounts and exposes it as an SMB share. Reachable from Finder, Explorer, and GNOME Files without any client-side config.
-  - title: Web + native clients
-    details: Browse files, format drives, flash and dump images, run fsck, and relabel volumes from the built-in web UI. A macOS menu-bar companion adds silent mount, auto-mount, and live SSE updates.
+  - title: Web + native apps
+    details: Browse files, format drives, flash and dump images, run fsck, and relabel volumes from the built-in web UI, or from the Mac and iPhone/iPad apps, which add silent mount on the Mac and Files integration on iOS.
   - title: Read-only appliance
     details: Ships as a custom pi-gen image with a read-only root filesystem, tmpfs logs, seccomp-hardened systemd unit, and optional BadUSB / Wi-Fi / boot-time hardening.
   - title: Zero-config discovery
@@ -36,3 +36,19 @@ features:
   - title: Physical eject
     details: A GPIO push button on the Pi safely unmounts every drive — and refuses, rather than lazy-unmounting, while a file is still open. A status LED shows mount state at a glance.
 ---
+
+<div class="airlock-home-apps">
+
+## Native apps for Mac, iPhone and iPad
+
+Everything the web UI does, in apps that find your Airlock by themselves.
+
+<div class="airlock-home-apps__shots">
+  <img class="airlock-home-apps__mac" src="/screenshots/mac.webp" alt="Airlock on macOS" />
+  <img class="airlock-home-apps__phone" src="/screenshots/iphone-light.jpg" alt="Airlock on iPhone" />
+</div>
+
+[See the apps →](/apps)
+
+</div>
+

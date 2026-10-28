@@ -1,11 +1,16 @@
 # macOS companion app
 
-`AirlockCompanion.app` is a small **menu-bar client** for macOS 13+
-that discovers every Airlock on your LAN and lets you mount, unmount,
-and eject drives without leaving your keyboard.
+`AirlockCompanion.app` is a **menu-bar client** for macOS 14+ that
+discovers every Airlock on your LAN and lets you mount, unmount, and
+eject drives without leaving your keyboard. **Open Airlock…** (⌘O in
+the menu) opens a window with everything the web UI does: drives,
+devices, format, flash, dump, fsck, relabel, mount and a file browser.
 
-- Menu-bar only (`LSUIElement`) — no Dock icon, no windows unless you
-  open Preferences.
+- Menu-bar first (`LSUIElement`): it shows in the Dock only while the
+  Airlock window is open. The window opens by itself on first launch,
+  with setup steps if no Airlock has been found yet.
+- **Forget** an Airlock you no longer use from its menu section or the
+  window's sidebar; it comes back if it's still on the network.
 - Auto-discovery via Bonjour on the `_airlock._tcp` service type —
   no configuration, no hostnames to remember.
 - Silent mount via `NetFSMountURLSync` from `NetFS.framework`; the
@@ -16,43 +21,25 @@ and eject drives without leaving your keyboard.
 
 ## Install
 
-The companion ships as an **ad-hoc-signed, un-notarized** DMG (no
-Apple Developer Account at time of writing). The ad-hoc signature
-satisfies Gatekeeper's *integrity* check, but the app still isn't
-trusted by Apple, so macOS refuses to open it on first launch. One
-manual step gets past that.
-
 1. Download `AirlockCompanion-<version>.dmg` from the
    [latest GitHub release](https://github.com/emdzej/airlock/releases/latest).
 2. Open the DMG and drag `AirlockCompanion.app` to `/Applications`.
-   Eject the DMG afterwards — running the app directly from the DMG's
-   read-only mount is what triggers the harshest "damaged" prompt.
-3. Strip the quarantine xattr from the copy in `/Applications`:
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app
-   ```
-   Then double-click to launch.
-4. Grant **Local Network** access when macOS prompts — the app needs
-   it to browse Bonjour and connect to airlock instances over LAN.
+3. Launch it. The Airlock window opens on first launch.
+4. Grant **Local Network** access when macOS asks: the app needs it to
+   browse Bonjour and reach airlock instances on your LAN.
 
-### Why the extra step?
+From 0.5.0 the DMG and the app are signed with a Developer ID and
+notarised by Apple, so they open with a double-click.
 
-macOS 15 (Sequoia) tightened Gatekeeper: unsigned or un-notarized
-apps launched from a downloaded DMG can no longer be bypassed with
-the old **right-click → Open** trick. macOS shows:
+### Releases before 0.5.0
 
-> **"AirlockCompanion.app" is damaged and can't be opened.**
-> You should eject the disk image.
+Those DMGs were only ad-hoc signed, and macOS 15 calls the app
+**"damaged and can't be opened"** when it comes from a download. Clear
+the download's quarantine flag once, then launch it:
 
-That's the quarantine attribute (`com.apple.quarantine`, set by
-Safari on every download) being enforced strictly against an app
-without a *notarized* signature. Ad-hoc signing fixes the "damaged"
-integrity failure, but the quarantine attribute still has to be
-cleared for Gatekeeper to run the binary — hence the one-off `xattr`
-command.
-
-Once launched once, macOS records the approval; subsequent launches
-work with no prompts.
+```sh
+xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app
+```
 
 ## Menu layout
 

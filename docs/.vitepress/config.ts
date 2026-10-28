@@ -41,7 +41,7 @@ export default defineConfig({
       { text: 'Overview', link: '/overview' },
       { text: 'Install', link: '/install' },
       { text: 'User guide', link: '/guide' },
-      { text: 'Companion (macOS)', link: '/companion' },
+      { text: 'Apps', link: '/apps' },
       {
         text: 'Reference',
         items: [
@@ -68,6 +68,7 @@ export default defineConfig({
           { text: 'User guide', link: '/guide' },
           { text: 'Web UI', link: '/guide#from-the-web-ui' },
           { text: 'SMB from Finder/Explorer', link: '/guide#from-macos-finder' },
+          { text: 'Mac, iPhone and iPad apps', link: '/apps' },
           { text: 'macOS companion app', link: '/companion' },
           { text: 'Format · flash · dump · fsck', link: '/guide#formatting-a-drive' },
           { text: 'Physical eject button', link: '/guide#physical-eject-button-led-optional' },
