@@ -10,15 +10,12 @@ companion is for at-a-glance status and everyday actions.
 
 Download `AirlockCompanion-<version>.dmg` from the main airlock
 [GitHub Releases](https://github.com/emdzej/airlock/releases) and drag
-the app to `/Applications`. The app is ad-hoc signed but not notarized
-(that needs an Apple Developer account), so on first launch macOS may
-call it "damaged"; clear the download quarantine flag:
+the app to `/Applications`. From 0.5.0 it's signed with a Developer ID
+and notarised, so it opens with a double-click. (Older, ad-hoc signed
+releases need `xattr -dr com.apple.quarantine
+/Applications/AirlockCompanion.app` once.)
 
-```sh
-xattr -dr com.apple.quarantine /Applications/AirlockCompanion.app
-```
-
-The DMG is a universal binary (Apple silicon + Intel), macOS 13+.
+The DMG is a universal binary (Apple silicon + Intel), macOS 14+.
 
 ## What it does
 
@@ -51,7 +48,7 @@ The DMG is a universal binary (Apple silicon + Intel), macOS 13+.
 
 ## Build & run
 
-Requires macOS 13+, Swift 5.9+. `./build.sh` produces a universal
+Requires macOS 14+, Swift 5.9+. `./build.sh` produces a universal
 binary, which goes through XCBuild and needs a full Xcode install; with
 only the command-line tools (or for a faster build), pick one arch.
 

@@ -1,3 +1,4 @@
+import AirlockKit
 import SwiftUI
 
 /// Long-running operations in progress anywhere in the app (format,
@@ -13,11 +14,16 @@ final class Activity: ObservableObject {
 
 /// The airlock hatch from the app icon, as line art: a rim with four
 /// bolts, and a handwheel (ring, X spokes, hub) that can turn.
-struct HatchView: View {
+public struct HatchView: View {
     var wheelAngle: Angle = .zero
     var lineWidth: CGFloat = 0.035 // fraction of the size
 
-    var body: some View {
+    public init(wheelAngle: Angle = .zero, lineWidth: CGFloat = 0.035) {
+        self.wheelAngle = wheelAngle
+        self.lineWidth = lineWidth
+    }
+
+    public var body: some View {
         GeometryReader { geo in
             let s = min(geo.size.width, geo.size.height)
             let lw = s * lineWidth
@@ -72,14 +78,14 @@ struct AirlockBackground: View {
 
     var body: some View {
         ZStack {
-            Color(uiColor: .systemGroupedBackground)
-            LinearGradient(colors: [Color.accentColor.opacity(scheme == .dark ? 0.16 : 0.10), .clear],
+            Color.groupedBackground
+            LinearGradient(colors: [Color.brand.opacity(scheme == .dark ? 0.16 : 0.10), .clear],
                            startPoint: .top, endPoint: .center)
             GeometryReader { geo in
                 let side = max(geo.size.width, geo.size.height) * 0.85
                 WatermarkHatch()
                     .frame(width: side, height: side)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.brand)
                     .opacity(scheme == .dark ? 0.07 : 0.05)
                     .position(x: geo.size.width * 0.92, y: geo.size.height * 0.88)
             }
@@ -129,12 +135,30 @@ extension View {
         scrollContentBackground(.hidden)
             .background { AirlockBackground() }
     }
+
+    /// Sidebar beside a watermarked detail pane: deep green, drawn in
+    /// dark-mode colours so text and icons read on it, and no hatch (it
+    /// would be drawn twice side by side).
+    func sidebarBackground() -> some View {
+        scrollContentBackground(.hidden)
+            .background { SidebarTint().ignoresSafeArea() }
+            .environment(\.colorScheme, .dark)
+    }
+}
+
+/// The icon's rim green, darkening towards the bottom.
+struct SidebarTint: View {
+    var body: some View {
+        LinearGradient(colors: [Color(red: 0.13, green: 0.36, blue: 0.27),
+                                Color(red: 0.08, green: 0.25, blue: 0.19)],
+                       startPoint: .top, endPoint: .bottom)
+    }
 }
 
 /// A rounded, tinted square behind a symbol, like Settings' icons.
 struct IconTile: View {
     let systemName: String
-    var tint: Color = .accentColor
+    var tint: Color = .brand
     var size: CGFloat = 40
 
     var body: some View {

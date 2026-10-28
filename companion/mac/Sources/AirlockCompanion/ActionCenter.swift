@@ -15,6 +15,7 @@ final class ActionCenter: NSObject {
     let discovery: Discovery
     let mounts: MountManager
     let preferencesWindow = PreferencesWindowController()
+    lazy var mainWindow = MainWindowController(discovery: discovery)
 
     /// `<host>/<share>` keys the user deliberately unmounted (menu
     /// Unmount, eject, Finder eject). Auto-mount leaves these alone
@@ -172,6 +173,28 @@ final class ActionCenter: NSObject {
 
     @objc func openPreferences(_ sender: NSMenuItem) {
         preferencesWindow.show()
+    }
+
+    @objc func openMainWindow(_ sender: NSMenuItem) {
+        mainWindow.show()
+    }
+
+    /// Remove a host from the menu and the remembered hosts, after a
+    /// confirmation. It reappears if Bonjour still sees it.
+    @objc func forgetHost(_ sender: NSMenuItem) {
+        guard let ctx = sender.representedObject as? HostContext else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Forget \(ctx.host.serviceName)?"
+        alert.informativeText = "It's removed from the menu. If it's still on the network, it shows up again the next time Airlock Companion finds it."
+        alert.addButton(withTitle: "Forget")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        for drive in ctx.host.drives where mounts.isMounted(host: ctx.host, drive: drive) {
+            mounts.unmount(host: ctx.host, drive: drive) { _ in }
+        }
+        discovery.forget(ctx.host)
     }
 
     // MARK: - Auto-mount

@@ -56,6 +56,16 @@ public final class Discovery: NSObject, ObservableObject {
         browser.searchForServices(ofType: "_airlock._tcp.", inDomain: "local.")
     }
 
+    /// Drop a host from the list and from the remembered hosts. A host
+    /// that's still on the network comes back the next time Bonjour
+    /// reports it (on iOS: when the app returns to the foreground).
+    public func forget(_ host: HostState) {
+        host.stopEventStream()
+        hosts.removeAll { $0 === host }
+        persist()
+        onChange?()
+    }
+
     private func persist() {
         let items = hosts.map { host in
             HostStore.Persisted(

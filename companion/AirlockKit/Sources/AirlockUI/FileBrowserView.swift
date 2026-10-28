@@ -47,11 +47,12 @@ struct FileBrowserView: View {
         }
         .safeAreaInset(edge: .bottom) { statusBar }
         .airlockBackground()
+        .macTransparentToolbar()
         .navigationTitle(path == "/" ? drive.displayName : (path as NSString).lastPathComponent)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavigationTitle()
         .toolbar {
             if writable {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .trailingAction) {
                     Menu {
                         Button("Upload Files…", systemImage: "square.and.arrow.up") { importing = true }
                         Button("New Folder", systemImage: "folder.badge.plus") {
@@ -71,9 +72,8 @@ struct FileBrowserView: View {
             if case let .success(urls) = result { upload(urls) }
         }
         .quickLookPreview($preview)
-        .sheet(item: Binding(get: { exportURL.map(ExportItem.init) }, set: { exportURL = $0?.url })) { item in
-            DocumentExporter(url: item.url) { exportURL = nil }
-        }
+        .fileMover(isPresented: Binding(get: { exportURL != nil }, set: { if !$0 { exportURL = nil } }),
+                   file: exportURL) { _ in exportURL = nil }
         .alert("New Folder", isPresented: $newFolder) {
             TextField("Name", text: $newName)
             Button("Cancel", role: .cancel) {}
@@ -110,7 +110,7 @@ struct FileBrowserView: View {
     private func row(_ entry: FileEntry) -> some View {
         let content = HStack(spacing: 12) {
             Image(systemName: entry.isDir ? "folder.fill" : icon(for: entry.name))
-                .foregroundStyle(entry.isDir ? Color.accentColor : Color.secondary)
+                .foregroundStyle(entry.isDir ? Color.brand : Color.secondary)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name).lineLimit(2)
@@ -140,7 +140,7 @@ struct FileBrowserView: View {
     private func actions(_ entry: FileEntry) -> some View {
         if !entry.isDir {
             Button("Open", systemImage: "eye") { open(entry) }
-            Button("Save to Files…", systemImage: "folder") { save(entry) }
+            Button("Save a Copy…", systemImage: "folder") { save(entry) }
         }
         if writable {
             Button("Rename", systemImage: "pencil") {
@@ -266,9 +266,4 @@ struct FileBrowserView: View {
         default: "doc"
         }
     }
-}
-
-private struct ExportItem: Identifiable {
-    let url: URL
-    var id: URL { url }
 }

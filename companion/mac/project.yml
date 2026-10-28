@@ -17,7 +17,7 @@ name: AirlockCompanion
 options:
   bundleIdPrefix: com.emdzej.airlock
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "14.0"
   createIntermediateGroups: true
   groupSortPosition: top
 
@@ -40,6 +40,9 @@ targets:
     # and the two copies drift.
     dependencies:
       - package: AirlockKit
+        product: AirlockKit
+      - package: AirlockKit
+        product: AirlockUI
     settings:
       base:
         INFOPLIST_FILE: Info.plist

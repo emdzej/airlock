@@ -1,6 +1,5 @@
 import AirlockKit
 import SwiftUI
-import UIKit
 
 /// Drives one streamed airlockd operation (format, flash, fsck) for a
 /// sheet: stage text, byte counters, the tool's output lines and the
@@ -30,13 +29,7 @@ final class OpRunner: ObservableObject {
         log = []
         uploaded = 0; uploadTotal = 0; written = 0; exitCode = nil
 
-        UIApplication.shared.isIdleTimerDisabled = true
-        Activity.shared.begin()
-        var bg = UIBackgroundTaskIdentifier.invalid
-        bg = UIApplication.shared.beginBackgroundTask(withName: "airlock-operation") {
-            UIApplication.shared.endBackgroundTask(bg)
-            bg = .invalid
-        }
+        let awake = KeepAwake("airlock-operation")
 
         task = Task {
             do {
@@ -49,9 +42,7 @@ final class OpRunner: ObservableObject {
             } catch {
                 phase = .failed(error.localizedDescription)
             }
-            UIApplication.shared.isIdleTimerDisabled = false
-            Activity.shared.end()
-            if bg != .invalid { UIApplication.shared.endBackgroundTask(bg) }
+            awake.end()
             onFinish()
         }
     }
@@ -144,29 +135,6 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, Send
                     didFinishDownloadingTo location: URL) {}
 }
 
-/// "Save to Files" for a local file (moves a copy wherever the user picks).
-struct DocumentExporter: UIViewControllerRepresentable {
-    let url: URL
-    var onDone: () -> Void = {}
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onDone) }
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onDone: () -> Void
-        init(_ onDone: @escaping () -> Void) { self.onDone = onDone }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { onDone() }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onDone() }
-    }
-}
-
 /// The "type the word to confirm" guard the web UI puts on format and flash.
 struct ConfirmWordField: View {
     let word: String
@@ -177,8 +145,7 @@ struct ConfirmWordField: View {
             Text("To confirm, type **\(word)**")
                 .font(.footnote)
             TextField(word, text: $text)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+                .plainInput()
                 .font(.body.monospaced())
         }
     }

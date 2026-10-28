@@ -3,14 +3,17 @@ import PackageDescription
 
 let package = Package(
     name: "AirlockCompanion",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     dependencies: [
         .package(path: "../AirlockKit")
     ],
     targets: [
         .executableTarget(
             name: "AirlockCompanion",
-            dependencies: ["AirlockKit"],
+            dependencies: [
+                .product(name: "AirlockKit", package: "AirlockKit"),
+                .product(name: "AirlockUI", package: "AirlockKit"),
+            ],
             path: "Sources/AirlockCompanion",
             linkerSettings: [
                 // NetFSMountURLSync (used for silent SMB mount).

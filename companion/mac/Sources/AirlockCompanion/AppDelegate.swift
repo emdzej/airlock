@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(
+            button.image = StatusIcon.make() ?? NSImage(
                 systemSymbolName: "externaldrive.badge.wifi",
                 accessibilityDescription: "Airlock"
             )
@@ -47,6 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         discovery.start()
 
         Notifier.shared.requestAuthorizationIfNeeded()
+
+        // First launch: open the window, so the setup steps (no airlock
+        // yet) and the full feature set aren't hidden behind the menu.
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "launchedBefore") || CommandLine.arguments.contains("--open-window") {
+            defaults.set(true, forKey: "launchedBefore")
+            actions.mainWindow.show()
+        }
     }
 
     private func rebuildMenu() {

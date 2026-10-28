@@ -12,8 +12,12 @@ struct HostView: View {
     @State private var confirmEjectAll = false
     @State private var showAbout = false
 
-    init(host: HostState) {
+    /// Asks the owner to confirm and forget this airlock.
+    var forget: (() -> Void)?
+
+    init(host: HostState, forget: (() -> Void)? = nil) {
         self.host = host
+        self.forget = forget
         _devices = StateObject(wrappedValue: DevicesModel(client: host.client))
     }
 
@@ -44,7 +48,7 @@ struct HostView: View {
                     .contextMenu {
                         Button("Eject", systemImage: "eject") { eject(drive) }
                         Button("Copy SMB URL", systemImage: "doc.on.doc") {
-                            UIPasteboard.general.string = smbURL(drive)
+                            Pasteboard.copy(smbURL(drive))
                         }
                     }
                     .disabled(!host.isReachable || drive.ejecting)
@@ -67,22 +71,25 @@ struct HostView: View {
             }
         }
         .airlockBackground()
+        .macTransparentToolbar()
         .animation(.default, value: host.drives)
         .animation(.default, value: devices.devices)
         .refreshable { await devices.refresh() }
-        .onAppear { if scenePhase == .active { devices.startPolling() } }
+        .onAppear { if scenePhase.isForeground { devices.startPolling() } }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { devices.startPolling() } else { devices.stopPolling() }
+            if phase.isForeground { devices.startPolling() } else { devices.stopPolling() }
         }
         // A drive appearing or going usually means a device changed too.
         .onChange(of: host.drives) { _, _ in Task { await devices.refresh() } }
         .navigationTitle(host.serviceName)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavigationTitle()
         .toolbar {
             // The header card shows the name; the title stays for the
             // back button on pushed screens.
+            #if os(iOS)
             ToolbarItem(placement: .principal) { Text("").accessibilityHidden(true) }
-            ToolbarItem(placement: .primaryAction) {
+            #endif
+            ToolbarItem(placement: .trailingAction) {
                 Menu {
                     Button("Eject All", systemImage: "eject") { confirmEjectAll = true }
                         .disabled(!host.isReachable || host.drives.isEmpty)
@@ -94,12 +101,16 @@ struct HostView: View {
                         Label("User Guide", systemImage: "book")
                     }
                     Button("About Airlock", systemImage: "info.circle") { showAbout = true }
+                    if let forget {
+                        Divider()
+                        Button("Forget This Airlock", systemImage: "trash", role: .destructive, action: forget)
+                    }
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
             }
         }
-        .sheet(isPresented: $showAbout) { AboutView() }
+        .sheet(isPresented: $showAbout) { AboutView().sheetFrame(width: 440) }
         .confirmationDialog("Eject every drive on \(host.serviceName)?",
                             isPresented: $confirmEjectAll, titleVisibility: .visible) {
             Button("Eject All", role: .destructive, action: ejectAll)
@@ -145,10 +156,10 @@ private struct HostHeader: View {
     var body: some View {
         HStack(spacing: 16) {
             HatchView()
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.brand)
                 .frame(width: 64, height: 64)
                 .padding(10)
-                .background(Color.accentColor.opacity(0.12), in: .rect(cornerRadius: 20, style: .continuous))
+                .background(Color.brand.opacity(0.12), in: .rect(cornerRadius: 20, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
                 Text(host.serviceName)
                     .font(.title2.weight(.bold))
@@ -201,7 +212,7 @@ private struct DriveCard: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            IconTile(systemName: icon, tint: drive.readOnly ? .orange : .accentColor, size: 44)
+            IconTile(systemName: icon, tint: drive.readOnly ? .orange : .brand, size: 44)
             VStack(alignment: .leading, spacing: 5) {
                 Text(drive.displayName)
                     .font(.headline)

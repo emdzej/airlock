@@ -65,11 +65,23 @@ enum MenuBuilder {
         // We set isEnabled explicitly; auto-enabling would override it
         // (every item whose target responds to its action is enabled).
         menu.autoenablesItems = false
+        let open = NSMenuItem(title: "Open Airlock…",
+                              action: #selector(ActionCenter.openMainWindow(_:)),
+                              keyEquivalent: "o")
+        open.target = actions
+        menu.addItem(open)
+        menu.addItem(NSMenuItem.separator())
+
         if hosts.isEmpty {
             let empty = NSMenuItem(title: "Looking for airlock instances…",
                                    action: nil, keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
+            let setUp = NSMenuItem(title: "  How to set one up…",
+                                   action: #selector(ActionCenter.openMainWindow(_:)),
+                                   keyEquivalent: "")
+            setUp.target = actions
+            menu.addItem(setUp)
         } else {
             for (idx, host) in hosts.enumerated() {
                 if idx > 0 { menu.addItem(NSMenuItem.separator()) }
@@ -135,6 +147,13 @@ enum MenuBuilder {
             openWeb.representedObject = hostCtx
             menu.addItem(openWeb)
         }
+
+        let forget = NSMenuItem(title: "  Forget \(host.serviceName)…",
+                                action: #selector(ActionCenter.forgetHost(_:)),
+                                keyEquivalent: "")
+        forget.target = actions
+        forget.representedObject = HostContext(host: host)
+        menu.addItem(forget)
     }
 
     private static func buildDriveSubmenu(host: HostState, drive: Drive,

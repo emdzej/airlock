@@ -27,6 +27,9 @@ targets:
       - path: Resources
     dependencies:
       - package: AirlockKit
+        product: AirlockKit
+      - package: AirlockKit
+        product: AirlockUI
       - target: AirlockFiles
     entitlements:
       path: AirlockMobile.entitlements
@@ -66,6 +69,7 @@ targets:
       - path: Sources/AirlockFiles
     dependencies:
       - package: AirlockKit
+        product: AirlockKit
       - sdk: FileProvider.framework
     entitlements:
       path: AirlockFiles.entitlements

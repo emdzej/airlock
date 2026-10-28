@@ -30,8 +30,7 @@ struct FormatSheet: View {
                         ForEach(Filesystem.allCases) { Text($0.title).tag($0) }
                     }
                     TextField("Label (optional)", text: $label)
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
+                        .capitalizedInput()
                     if !labelOK {
                         Text("\(fs.title) labels are at most \(fs.maxLabelLength) characters.")
                             .font(.caption).foregroundStyle(.red)
@@ -44,11 +43,12 @@ struct FormatSheet: View {
                 OpProgressSection(runner: runner)
             }
             .navigationTitle("Format")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar { sheetToolbar(runner: runner, dismiss: dismiss, action: "Format",
                                     enabled: confirm == word && labelOK, start: start) }
             .interactiveDismissDisabled(runner.isRunning)
             .airlockBackground()
+            .sheetFrame()
             .sensoryFeedback(trigger: runner.phase) { _, phase in
                 switch phase {
                 case .running: .warning
@@ -128,11 +128,12 @@ struct FlashSheet: View {
                 OpProgressSection(runner: runner, expectedBytes: device.sizeBytes)
             }
             .navigationTitle("Flash Image")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar { sheetToolbar(runner: runner, dismiss: dismiss, action: "Flash",
                                     enabled: image != nil && confirm == word && !tooBig, start: start) }
             .interactiveDismissDisabled(runner.isRunning)
             .airlockBackground()
+            .sheetFrame()
             .sensoryFeedback(trigger: runner.phase) { _, phase in
                 switch phase {
                 case .running: .warning
@@ -193,6 +194,7 @@ struct DumpSheet: View {
     @State private var result: URL?
     @State private var failure: String?
     @State private var exporting = false
+    @State private var saved = false
     @State private var task: Task<Void, Never>?
 
     var body: some View {
@@ -219,7 +221,11 @@ struct DumpSheet: View {
                         } else if let result {
                             Label("\(result.lastPathComponent) · \(bytes(downloader.received))",
                                   systemImage: "checkmark.circle.fill")
-                            Button("Save to Files…", systemImage: "folder") { exporting = true }
+                            if saved {
+                                Label("Saved", systemImage: "folder.badge.checkmark").foregroundStyle(.secondary)
+                            } else {
+                                Button("Save…", systemImage: "folder") { exporting = true }
+                            }
                         } else {
                             HStack {
                                 ProgressView().padding(.trailing, 4)
@@ -232,7 +238,7 @@ struct DumpSheet: View {
                 }
             }
             .navigationTitle("Save Image")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(downloader.isRunning ? "Stop" : "Close") {
@@ -247,9 +253,10 @@ struct DumpSheet: View {
             }
             .interactiveDismissDisabled(downloader.isRunning)
             .airlockBackground()
+            .sheetFrame()
             .sensoryFeedback(.success, trigger: result)
-            .sheet(isPresented: $exporting) {
-                if let result { DocumentExporter(url: result) { exporting = false } }
+            .fileMover(isPresented: $exporting, file: result) { outcome in
+                if case .success = outcome { saved = true }
             }
         }
     }
@@ -257,13 +264,9 @@ struct DumpSheet: View {
     private func start() {
         failure = nil
         let url = client.dumpURL(device.name, compression: compression)
-        UIApplication.shared.isIdleTimerDisabled = true
-        Activity.shared.begin()
+        let awake = KeepAwake("airlock-dump")
         task = Task {
-            defer {
-                UIApplication.shared.isIdleTimerDisabled = false
-                Activity.shared.end()
-            }
+            defer { awake.end() }
             do {
                 result = try await downloader.download(url)
                 exporting = true
@@ -307,11 +310,12 @@ struct FsckSheet: View {
                 OpProgressSection(runner: runner)
             }
             .navigationTitle("Check Filesystem")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar { sheetToolbar(runner: runner, dismiss: dismiss, action: repair ? "Repair" : "Check",
                                     enabled: true, start: start) }
             .interactiveDismissDisabled(runner.isRunning)
             .airlockBackground()
+            .sheetFrame()
             .sensoryFeedback(trigger: runner.phase) { _, phase in
                 switch phase {
                 case .running: .warning

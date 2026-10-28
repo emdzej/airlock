@@ -24,6 +24,10 @@ final class DevicesModel: ObservableObject {
             if d != devices { devices = d }
             loadError = nil
         } catch is CancellationError {
+        } catch let e as URLError {
+            // URLSession's wording is about "the Internet"; this is a box
+            // on the LAN.
+            loadError = e.code == .cancelled ? loadError : "Can't reach this airlock right now."
         } catch {
             loadError = error.localizedDescription
         }
@@ -57,7 +61,7 @@ struct DeviceRow: View {
     var body: some View {
         HStack(spacing: 14) {
             IconTile(systemName: device.isEmpty ? "sdcard" : "externaldrive.connected.to.line.below.fill",
-                     tint: device.isEmpty ? .secondary : .accentColor, size: 44)
+                     tint: device.isEmpty ? .secondary : .brand, size: 44)
             VStack(alignment: .leading, spacing: 5) {
                 Text(device.title).font(.headline).lineLimit(1)
                 HStack(spacing: 6) {
@@ -114,7 +118,7 @@ struct DeviceView: View {
             }
         }
         .navigationTitle(model.device(named: name)?.title ?? name)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavigationTitle()
         .sheet(item: $sheet) { kind in
             if let device = model.device(named: name) {
                 switch kind {
@@ -128,8 +132,7 @@ struct DeviceView: View {
         .alert("Rename \(labelTarget?.name ?? "")", isPresented: Binding(
             get: { labelTarget != nil }, set: { if !$0 { labelTarget = nil } })) {
             TextField("Label", text: $newLabel)
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
+                .capitalizedInput()
             Button("Cancel", role: .cancel) {}
             Button("Rename") { if let p = labelTarget { relabel(p, to: newLabel) } }
         } message: {
@@ -161,29 +164,46 @@ struct DeviceView: View {
             }
 
             if !device.livePartitions.isEmpty {
-                Section("Partitions") {
+                Section {
                     ForEach(device.livePartitions) { p in
                         partitionRow(p, device: device)
                     }
+                } header: {
+                    Text("Partitions")
+                } footer: {
+                    #if os(macOS)
+                    Text("Format and Flash in the toolbar erase everything on the device.")
+                    #endif
                 }
             }
 
+            #if os(iOS)
+            // iOS: actions as tinted rows in the list (HIG lists). The Mac
+            // puts them in the window toolbar instead, like Disk Utility.
             Section {
-                Button("Format…", systemImage: "eraser") { sheet = .format }
-                    .disabled(!device.isWritable || working != nil)
-                Button("Flash Image…", systemImage: "bolt.horizontal") { sheet = .flash }
-                    .disabled(!device.isWritable || working != nil)
-                Button("Save Image (Dump)…", systemImage: "square.and.arrow.down") { sheet = .dump }
-                    .disabled(device.isEmpty || working != nil)
+                formatButton(device)
+                flashButton(device)
+                dumpButton(device)
             } footer: {
                 Text("Format and Flash erase everything on the device.")
             }
 
             Section {
-                Button("Eject Device", systemImage: "eject", role: .destructive) { eject(device) }
-                    .disabled(working != nil || !host.isReachable)
+                ejectButton(device)
+            }
+            #endif
+        }
+        #if os(macOS)
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                formatButton(device).help("Erase the device and create a new filesystem")
+                flashButton(device).help("Write a disk image to the whole device")
+                dumpButton(device).help("Save an image of the whole device")
+                ejectButton(device).help("Unmount every partition and power the device down")
             }
         }
+        .labelStyle(.titleAndIcon)
+        #endif
         .overlay {
             if let working {
                 ProgressView(working).padding().background(.regularMaterial, in: .rect(cornerRadius: 12))
@@ -191,18 +211,47 @@ struct DeviceView: View {
         }
         .refreshable { await model.refresh() }
         .airlockBackground()
+        .macTransparentToolbar()
+    }
+
+    private func formatButton(_ device: Device) -> some View {
+        Button("Format…", systemImage: "eraser") { sheet = .format }
+            .disabled(!device.isWritable || working != nil)
+    }
+
+    private func flashButton(_ device: Device) -> some View {
+        Button("Flash Image…", systemImage: "bolt.horizontal") { sheet = .flash }
+            .disabled(!device.isWritable || working != nil)
+    }
+
+    private func dumpButton(_ device: Device) -> some View {
+        Button(dumpTitle, systemImage: "square.and.arrow.down") { sheet = .dump }
+            .disabled(device.isEmpty || working != nil)
+    }
+
+    private var dumpTitle: String {
+        #if os(iOS)
+        "Save Image (Dump)…"
+        #else
+        "Save Image…"
+        #endif
+    }
+
+    private func ejectButton(_ device: Device) -> some View {
+        Button("Eject Device", systemImage: "eject", role: .destructive) { eject(device) }
+            .disabled(working != nil || !host.isReachable)
     }
 
     private func partitionRow(_ p: Partition, device: Device) -> some View {
         HStack(spacing: 14) {
             IconTile(systemName: p.fsType.isEmpty ? "square.dashed" : "internaldrive",
-                     tint: p.shareName != nil ? .accentColor : .secondary, size: 36)
+                     tint: p.shareName != nil ? .brand : .secondary, size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(p.label.isEmpty ? p.name : p.label).font(.body.weight(.medium))
                 HStack(spacing: 6) {
                     Text("\(p.name) · \(p.sizeHuman)").font(.caption).foregroundStyle(.secondary)
                     Badge(text: p.fsType.isEmpty ? "unformatted" : p.fsType)
-                    if p.shareName != nil { Badge(text: "Shared", tint: .accentColor) }
+                    if p.shareName != nil { Badge(text: "Shared", tint: .brand) }
                 }
             }
         }
