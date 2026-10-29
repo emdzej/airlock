@@ -11,6 +11,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let client: AirlockClient?
     let items: ItemMap
 
+    /// Set once Files has been told the server is unreachable: until the
+    /// extension signals it resolved, Files shows a sync-problem badge
+    /// and holds back background work for the domain.
+    private let unreachableLock = NSLock()
+    private var reportedUnreachable = false
+
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         drive = DriveDomainID(domain.identifier.rawValue)
@@ -67,7 +73,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     func writable(_ client: AirlockClient, _ drive: DriveDomainID) async throws -> Bool {
         if let cachedWritable { return cachedWritable }
         guard let d = try await client.drives().first(where: { $0.shareName == drive.share }) else {
-            throw NSFileProviderError(.serverUnreachable)
+            throw unreachable()
         }
         cachedWritable = !d.readOnly
         return !d.readOnly
@@ -168,11 +174,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 if changedFields.contains(.contents), let newContents {
                     try await client.upload(drive.share, path: path, from: newContents)
                 }
-                // Dates, tags, favorites: airlockd can't store them; Files
-                // keeps them locally.
-                let handled: NSFileProviderItemFields = [.filename, .parentItemIdentifier, .contents]
+                // Dates, tags, favourites, last used: airlockd can't store
+                // them, so they're accepted and dropped. Reporting them as
+                // still pending makes Files retry forever and badge the
+                // app with a sync problem.
                 let updated = try await lookup(item.itemIdentifier)
-                completionHandler(updated, changedFields.subtracting(handled), false, nil)
+                completionHandler(updated, [], false, nil)
             } catch {
                 completionHandler(nil, [], false, mapError(error))
             }
@@ -233,8 +240,23 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                                     userInfo: [NSLocalizedDescriptionKey: e.localizedDescription])
             }
         }
-        if (error as NSError).domain == NSURLErrorDomain { return NSFileProviderError(.serverUnreachable) }
+        if (error as NSError).domain == NSURLErrorDomain { return unreachable() }
         return error
+    }
+
+    func unreachable() -> NSFileProviderError {
+        unreachableLock.withLock { reportedUnreachable = true }
+        return NSFileProviderError(.serverUnreachable)
+    }
+
+    /// A request went through: clear an earlier "server unreachable".
+    func reached() {
+        let wasReported = unreachableLock.withLock {
+            defer { reportedUnreachable = false }
+            return reportedUnreachable
+        }
+        guard wasReported, let manager = NSFileProviderManager(for: domain) else { return }
+        manager.signalErrorResolved(NSFileProviderError(.serverUnreachable)) { _ in }
     }
 }
 
@@ -260,6 +282,7 @@ final class FolderEnumerator: NSObject, NSFileProviderEnumerator {
                 let listing = try await client.list(drive.share, path: path)
                 observer.didEnumerate(listing.entries.map { ext.makeItem($0, in: path, writable: writable) })
                 observer.finishEnumerating(upTo: nil)
+                ext.reached()
             } catch {
                 observer.finishEnumeratingWithError(ext.mapError(error))
             }

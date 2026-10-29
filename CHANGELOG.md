@@ -33,6 +33,8 @@ changes are allowed between minor versions.
 
 ### Fixed
 
+- **iOS Files:** a sync-problem badge on Airlock that never cleared,
+  after the airlock had been briefly unreachable.
 - **Mac:** screens opened from an airlock (files, a device) had no back
   button; they now have one, and ⌘[.
 - **Mac:** the Format, Flash, Save Image and Check sheets laid their

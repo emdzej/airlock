@@ -55,8 +55,17 @@ final class FilesDomains {
             if stale || forgotten {
                 do { try await NSFileProviderManager.remove(domain) }
                 catch { log.error("removing \(raw, privacy: .public): \(error.localizedDescription, privacy: .public)") }
-            } else if let name = wanted[raw], name == domain.displayName {
-                wanted[raw] = nil // already there
+            } else {
+                if let name = wanted[raw], name == domain.displayName {
+                    wanted[raw] = nil // already there
+                }
+                // The airlock is reachable again: clear a "server
+                // unreachable" the extension reported while it wasn't,
+                // or Files keeps a sync-problem badge on the app.
+                if authoritative.contains(id.hostname) {
+                    try? await NSFileProviderManager(for: domain)?
+                        .signalErrorResolved(NSFileProviderError(.serverUnreachable))
+                }
             }
         }
 
