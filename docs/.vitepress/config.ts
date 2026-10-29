@@ -68,8 +68,11 @@ export default defineConfig({
           { text: 'User guide', link: '/guide' },
           { text: 'Web UI', link: '/guide#from-the-web-ui' },
           { text: 'SMB from Finder/Explorer', link: '/guide#from-macos-finder' },
-          { text: 'Mac, iPhone and iPad apps', link: '/apps' },
-          { text: 'macOS companion app', link: '/companion' },
+          {
+            text: 'Mac, iPhone and iPad apps',
+            link: '/apps',
+            items: [{ text: 'macOS install and details', link: '/companion' }],
+          },
           { text: 'Format · flash · dump · fsck', link: '/guide#formatting-a-drive' },
           { text: 'Physical eject button', link: '/guide#physical-eject-button-led-optional' },
         ],
@@ -78,6 +81,8 @@ export default defineConfig({
         text: 'Reference',
         collapsed: false,
         items: [
+          { text: 'Support', link: '/support' },
+          { text: 'Privacy', link: '/privacy' },
           {
             text: 'Changelog',
             link: 'https://github.com/emdzej/airlock/blob/main/CHANGELOG.md',
