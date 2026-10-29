@@ -42,6 +42,9 @@ struct FormatSheet: View {
                 }
                 OpProgressSection(runner: runner)
             }
+            // Grouped sections on the Mac too (its default puts labels in a
+            // bare column), matching iOS.
+            .formStyle(.grouped)
             .navigationTitle("Format")
             .inlineNavigationTitle()
             .toolbar { sheetToolbar(runner: runner, dismiss: dismiss, action: "Format",
@@ -127,6 +130,9 @@ struct FlashSheet: View {
                 }
                 OpProgressSection(runner: runner, expectedBytes: device.sizeBytes)
             }
+            // Grouped sections on the Mac too (its default puts labels in a
+            // bare column), matching iOS.
+            .formStyle(.grouped)
             .navigationTitle("Flash Image")
             .inlineNavigationTitle()
             .toolbar { sheetToolbar(runner: runner, dismiss: dismiss, action: "Flash",
@@ -237,6 +243,9 @@ struct DumpSheet: View {
                     }
                 }
             }
+            // Grouped sections on the Mac too (its default puts labels in a
+            // bare column), matching iOS.
+            .formStyle(.grouped)
             .navigationTitle("Save Image")
             .inlineNavigationTitle()
             .toolbar {
@@ -309,6 +318,9 @@ struct FsckSheet: View {
                 }
                 OpProgressSection(runner: runner)
             }
+            // Grouped sections on the Mac too (its default puts labels in a
+            // bare column), matching iOS.
+            .formStyle(.grouped)
             .navigationTitle("Check Filesystem")
             .inlineNavigationTitle()
             .toolbar { sheetToolbar(runner: runner, dismiss: dismiss, action: repair ? "Repair" : "Check",

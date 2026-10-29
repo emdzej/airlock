@@ -49,6 +49,7 @@ struct FileBrowserView: View {
         .airlockBackground()
         .macTransparentToolbar()
         .navigationTitle(path == "/" ? drive.displayName : (path as NSString).lastPathComponent)
+        .macBackButton()
         .inlineNavigationTitle()
         .toolbar {
             if writable {

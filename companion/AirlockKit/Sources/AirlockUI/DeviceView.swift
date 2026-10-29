@@ -118,6 +118,7 @@ struct DeviceView: View {
             }
         }
         .navigationTitle(model.device(named: name)?.title ?? name)
+        .macBackButton()
         .inlineNavigationTitle()
         .sheet(item: $sheet) { kind in
             if let device = model.device(named: name) {
@@ -253,6 +254,23 @@ struct DeviceView: View {
                     Badge(text: p.fsType.isEmpty ? "unformatted" : p.fsType)
                     if p.shareName != nil { Badge(text: "Shared", tint: .brand) }
                 }
+            }
+            Spacer(minLength: 0)
+            // Visible way in to the partition actions; long press and
+            // swipe stay as shortcuts.
+            if p.canMount || p.canRelabel || p.canFsck {
+                Menu {
+                    partitionActions(p)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(.rect)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("Actions for \(p.label.isEmpty ? p.name : p.label)")
             }
         }
         .contextMenu { partitionActions(p) }

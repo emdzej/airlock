@@ -161,6 +161,12 @@ extension View {
         #endif
     }
 
+    /// macOS shows no back button for screens pushed onto the split
+    /// view's detail stack, so pushed screens add their own (⌘[).
+    func macBackButton() -> some View {
+        modifier(MacBackButton())
+    }
+
     /// macOS: let the pane's background run under the window toolbar,
     /// instead of a separate light strip that meets the sidebar in a
     /// corner.
@@ -195,6 +201,26 @@ extension View {
         textInputAutocapitalization(.never).autocorrectionDisabled()
         #else
         autocorrectionDisabled()
+        #endif
+    }
+}
+
+private struct MacBackButton: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { dismiss() } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                .help("Back")
+            }
+        }
+        #else
+        content
         #endif
     }
 }
