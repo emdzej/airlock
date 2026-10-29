@@ -11,11 +11,12 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     let client: AirlockClient?
     let items: ItemMap
 
-    /// Set once Files has been told the server is unreachable: until the
-    /// extension signals it resolved, Files shows a sync-problem badge
-    /// and holds back background work for the domain.
+    /// Whether Files may be holding a "server unreachable" from us: until
+    /// it's signalled resolved, Files shows a sync-problem badge and holds
+    /// back background work for the domain. Starts true, since a previous
+    /// run of the extension may have reported it.
     private let unreachableLock = NSLock()
-    private var reportedUnreachable = false
+    private var reportedUnreachable = true
 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
@@ -34,7 +35,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
         let progress = Progress(totalUnitCount: 1)
         Task {
             do {
-                completionHandler(try await lookup(identifier), nil)
+                let item = try await lookup(identifier)
+                reached()
+                completionHandler(item, nil)
             } catch {
                 completionHandler(nil, mapError(error))
             }
@@ -72,8 +75,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     /// Write-protected media (SD lock switch) is read-only for Files too.
     func writable(_ client: AirlockClient, _ drive: DriveDomainID) async throws -> Bool {
         if let cachedWritable { return cachedWritable }
+        // Not listed (yet, or any more): the airlock answered, so this
+        // isn't "unreachable". Read-only until it's listed; not cached.
         guard let d = try await client.drives().first(where: { $0.shareName == drive.share }) else {
-            throw unreachable()
+            return false
         }
         cachedWritable = !d.readOnly
         return !d.readOnly
@@ -104,6 +109,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
                 try? FileManager.default.removeItem(at: dst)
                 try FileManager.default.moveItem(at: tmp, to: dst)
                 progress.completedUnitCount = 100
+                reached()
                 completionHandler(dst, item, nil)
             } catch {
                 completionHandler(nil, nil, mapError(error))

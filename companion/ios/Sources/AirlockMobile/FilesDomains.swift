@@ -72,8 +72,14 @@ final class FilesDomains {
         // New drives, and renamed ones (re-adding updates the display name).
         for (raw, name) in wanted {
             let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(raw), displayName: name)
-            do { try await NSFileProviderManager.add(domain) }
-            catch { log.error("adding \(raw, privacy: .public): \(error.localizedDescription, privacy: .public)") }
+            do {
+                try await NSFileProviderManager.add(domain)
+                // Re-adding keeps the domain's state, an old error included.
+                try? await NSFileProviderManager(for: domain)?
+                    .signalErrorResolved(NSFileProviderError(.serverUnreachable))
+            } catch {
+                log.error("adding \(raw, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 }
