@@ -147,7 +147,7 @@ domain (common on guest / IoT VLANs) or `avahi-daemon` isn't
 running.
 
 **I want to start over.**
-Quit the app, then delete `~/Library/Preferences/com.emdzej.airlock.companion.plist`
+Quit the app, then delete `~/Library/Preferences/pl.emdzej.airlock.companion.plist`
 and any mounted shares under `/Volumes/`. Relaunch.
 
 ## Under the hood
@@ -161,8 +161,8 @@ wrapped into a `.app` bundle by `build.sh`. Notable pieces:
   (bytes not lines — `URLSession.bytes(for:).lines` coalesces small
   frames and drops them on macOS 13/14).
 - **`MountManager.swift`** — `NetFSMountURLSync` for silent mount,
-  `/sbin/umount` for unmount, `/sbin/mount` output parsing for
-  ground truth.
+  `FileManager.unmountVolume` for unmount (both work in the App
+  Sandbox), the kernel mount table (`getfsstat`) for ground truth.
 - **`ActionCenter.swift`** — orchestrates auto-mount and
   reconcile-on-eject, running after every discovery/SSE event.
 

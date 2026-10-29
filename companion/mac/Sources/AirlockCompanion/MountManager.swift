@@ -145,8 +145,8 @@ final class MountManager {
         return "NetFS error \(status)"
     }
 
-    /// Unmount `drive` from `host` via `/sbin/umount`. Best-effort —
-    /// `umount` fails if a Finder window has files open.
+    /// Unmount `drive` from `host`. Best-effort: it fails while an app
+    /// has files open on the share.
     func unmount(host: HostState, drive: Drive, completion: @escaping Completion) {
         unmountByKey(key(host: host, drive: drive), completion: completion)
     }
@@ -164,7 +164,7 @@ final class MountManager {
             return
         }
         unmountsInFlight[key] = [completion]
-        Self.run("/sbin/umount", [mp]) { [weak self] err in
+        Self.unmountVolume(mp) { [weak self] err in
             self?.finishUnmount(key: key, error: err)
         }
     }
@@ -251,37 +251,14 @@ final class MountManager {
         return (host, decodedShare)
     }
 
-    /// Run a tool off the main thread and call back on main with nil or
-    /// an error carrying its stderr. Reads the pipe to EOF before
-    /// waiting so a chatty tool can't deadlock on a full pipe buffer.
-    private static func run(_ path: String, _ args: [String],
-                            done: @escaping @MainActor @Sendable (Error?) -> Void) {
-        DispatchQueue.global(qos: .utility).async {
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: path)
-            task.arguments = args
-            let errPipe = Pipe()
-            task.standardError = errPipe
-            task.standardOutput = FileHandle.nullDevice
-            var result: Error?
-            do {
-                try task.run()
-                let stderr = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(),
-                                    encoding: .utf8) ?? ""
-                task.waitUntilExit()
-                if task.terminationStatus != 0 {
-                    let msg = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                    result = NSError(domain: "com.emdzej.airlock.companion",
-                                     code: Int(task.terminationStatus),
-                                     userInfo: [NSLocalizedDescriptionKey:
-                                                msg.isEmpty ? "\(path) exit \(task.terminationStatus)" : msg])
-                }
-            } catch {
-                result = error
-            }
-            let err = result
+    /// Unmount through Foundation (the DiskArbitration path Finder's
+    /// eject uses). Unlike running /sbin/umount it also works inside the
+    /// App Sandbox, which the Mac App Store build needs.
+    private static func unmountVolume(_ path: String,
+                                      done: @escaping @MainActor @Sendable (Error?) -> Void) {
+        FileManager.default.unmountVolume(at: URL(fileURLWithPath: path), options: [.withoutUI]) { error in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { done(err) }
+                MainActor.assumeIsolated { done(error) }
             }
         }
     }

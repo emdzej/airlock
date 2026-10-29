@@ -4,6 +4,7 @@ import AppKit
 // (SwiftPM native vs. XCBuild for universal builds) treats it as
 // main-actor isolated — say so explicitly.
 MainActor.assumeIsolated {
+    migrateLegacyDefaults()
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
@@ -15,4 +16,18 @@ MainActor.assumeIsolated {
 
     // NSApplication.delegate is weak; keep ours alive for the run loop.
     withExtendedLifetime(delegate) { app.run() }
+}
+
+/// Up to 0.5.0 the bundle id was com.emdzej.airlock.companion. Copy its
+/// preferences (remembered airlocks, settings) into the new domain once.
+@MainActor
+func migrateLegacyDefaults() {
+    let legacy = "com.emdzej.airlock.companion"
+    let defaults = UserDefaults.standard
+    guard !defaults.bool(forKey: "migratedLegacyDefaults") else { return }
+    defaults.set(true, forKey: "migratedLegacyDefaults")
+    guard let old = defaults.persistentDomain(forName: legacy) else { return }
+    for (key, value) in old where defaults.object(forKey: key) == nil {
+        defaults.set(value, forKey: key)
+    }
 }

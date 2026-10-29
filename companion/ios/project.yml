@@ -8,7 +8,7 @@
 name: AirlockMobile
 
 options:
-  bundleIdPrefix: pl.emdzej.airlock
+  bundleIdPrefix: pl.emdzej.airlock.companion
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -31,6 +31,9 @@ targets:
       - package: AirlockKit
         product: AirlockUI
       - target: AirlockFiles
+    scheme:
+      testTargets:
+        - AirlockScreenshots
     entitlements:
       path: AirlockMobile.entitlements
       properties:
@@ -38,7 +41,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Airlock
-        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock
+        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock.companion
         DEVELOPMENT_TEAM: A2WT9CD8P3
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -61,6 +64,23 @@ targets:
         # App Store: no non-exempt encryption (plain HTTP on the LAN).
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
 
+  # UI test that walks the main screens for App Store screenshots.
+  AirlockScreenshots:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Sources/AirlockScreenshots
+    dependencies:
+      - target: AirlockMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock.companion.screenshots
+        DEVELOPMENT_TEAM: A2WT9CD8P3
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+
   # File Provider extension: each shared drive as a location in Files.
   AirlockFiles:
     type: app-extension
@@ -78,7 +98,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: AirlockFiles
-        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock.files
+        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock.companion.files
         DEVELOPMENT_TEAM: A2WT9CD8P3
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1,2"

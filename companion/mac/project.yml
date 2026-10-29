@@ -15,7 +15,7 @@
 name: AirlockCompanion
 
 options:
-  bundleIdPrefix: com.emdzej.airlock
+  bundleIdPrefix: pl.emdzej.airlock.companion
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -38,6 +38,9 @@ targets:
     # Use the committed Info.plist as-is. No `info:` block — with one,
     # XcodeGen regenerates (overwrites) the plist from its properties
     # and the two copies drift.
+    scheme:
+      testTargets:
+        - AirlockCompanionScreenshots
     dependencies:
       - package: AirlockKit
         product: AirlockKit
@@ -47,6 +50,13 @@ targets:
       base:
         INFOPLIST_FILE: Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        # The Xcode project builds the Mac App Store variant: sandboxed,
+        # signed by Xcode (Product › Archive). build.sh makes the DMG.
+        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock.companion
+        DEVELOPMENT_TEAM: A2WT9CD8P3
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: AppStore.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
         # Informational only — Info.plist carries literal versions
         # (CFBundleVersion == CFBundleShortVersionString, both stamped
         # with the tag by the release workflow).
@@ -55,3 +65,19 @@ targets:
         # Xcode only accepts major language modes here (5.0 / 6.0);
         # "5.9" is rejected. Matches Package.swift's Swift 5 mode.
         SWIFT_VERSION: "5.0"
+
+  # UI test that walks the main screens for Mac App Store screenshots.
+  AirlockCompanionScreenshots:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: Screenshots
+    dependencies:
+      - target: AirlockCompanion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: pl.emdzej.airlock.companion.screenshots
+        DEVELOPMENT_TEAM: A2WT9CD8P3
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES

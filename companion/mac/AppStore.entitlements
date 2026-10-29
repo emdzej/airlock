@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Mac App Store build only (the Xcode project). The Developer ID DMG
+     (build.sh, sign.sh) runs outside the sandbox and uses none of these. -->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <!-- Bonjour, the airlock HTTP API and SMB mounts (NetFS). -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Upload files, choose an image to flash, save files and dumps:
+         only what the user picks in an open or save panel. -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+</plist>

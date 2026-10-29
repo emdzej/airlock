@@ -9,7 +9,7 @@ import os
 /// them as unreachable meanwhile.
 @MainActor
 final class FilesDomains {
-    private let log = Logger(subsystem: "pl.emdzej.airlock", category: "files-domains")
+    private let log = Logger(subsystem: "pl.emdzej.airlock.companion", category: "files-domains")
     private var running = false
     private var pending: [HostState]?
 

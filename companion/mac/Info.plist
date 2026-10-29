@@ -7,7 +7,7 @@
     <key>CFBundleDisplayName</key>
     <string>Airlock Companion</string>
     <key>CFBundleIdentifier</key>
-    <string>com.emdzej.airlock.companion</string>
+    <string>pl.emdzej.airlock.companion</string>
     <key>CFBundleExecutable</key>
     <string>AirlockCompanion</string>
     <key>CFBundleIconFile</key>
@@ -21,6 +21,11 @@
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <!-- Keep the app out of the Dock; menubar-only. -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <!-- No encryption of its own: plain HTTP and SMB on the LAN. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>LSUIElement</key>
     <true/>
     <!-- Allow Bonjour browsing for our service on macOS 14+ -->
