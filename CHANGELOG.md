@@ -30,6 +30,8 @@ App Store: one bundle ID everywhere and a sandboxed Mac App Store build.
   `pl.emdzej.airlock` on iOS, `com.emdzej.airlock.companion` on the
   Mac). The Mac app copies its settings over from the old ID once; the
   iOS app installs as a new app.
+- **File uploads and downloads** in the apps show a progress bar, not
+  just a byte count.
 - **Partition actions** (Mount, Rename, Check Filesystem) have a visible
   **…** button on each partition row, not only long press or right-click.
 - The Mac app unmounts with `FileManager.unmountVolume` instead of

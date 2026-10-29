@@ -17,6 +17,11 @@ struct FileBrowserView: View {
 
     @State private var importing = false
     @State private var uploadStatus: String?
+    /// Bytes sent of the current file, for the progress bar.
+    @State private var uploadProgress: (sent: Int64, total: Int64)?
+    /// Bumped per file: progress callbacks that arrive late (they hop
+    /// from URLSession's queue) can't touch a newer or finished upload.
+    @State private var uploadID = 0
     @State private var newFolder = false
     @State private var newName = ""
     @State private var renaming: FileEntry?
@@ -158,14 +163,27 @@ struct FileBrowserView: View {
     @ViewBuilder
     private var statusBar: some View {
         if let status = uploadStatus ?? downloadStatus {
-            HStack {
-                ProgressView().padding(.trailing, 4)
+            VStack(alignment: .leading, spacing: 8) {
                 Text(status).font(.footnote).monospacedDigit().lineLimit(1)
-                Spacer()
+                if let fraction = statusFraction {
+                    ProgressView(value: fraction)
+                } else {
+                    ProgressView(value: 0).opacity(0.4)
+                }
             }
             .padding()
             .background(.regularMaterial)
         }
+    }
+
+    /// 0…1 when the total is known.
+    private var statusFraction: Double? {
+        if uploadStatus != nil {
+            guard let p = uploadProgress, p.total > 0 else { return nil }
+            return min(1, Double(p.sent) / Double(p.total))
+        }
+        guard downloader.expected > 0 else { return nil }
+        return min(1, Double(downloader.received) / Double(downloader.expected))
     }
 
     private var downloadStatus: String? {
@@ -218,10 +236,15 @@ struct FileBrowserView: View {
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 let name = url.lastPathComponent
                 let prefix = urls.count > 1 ? "(\(i + 1)/\(urls.count)) " : ""
+                uploadID += 1
+                let id = uploadID
                 uploadStatus = "Uploading \(prefix)\(name)…"
+                uploadProgress = nil
                 do {
                     try await client.upload(drive.shareName, path: join(name), from: url) { sent, total in
                         Task { @MainActor in
+                            guard id == uploadID, uploadStatus != nil else { return }
+                            uploadProgress = (sent, total)
                             uploadStatus = "Uploading \(prefix)\(name) · \(bytes(sent)) / \(bytes(total))"
                         }
                     }
@@ -230,7 +253,9 @@ struct FileBrowserView: View {
                     break
                 }
             }
+            uploadID += 1
             uploadStatus = nil
+            uploadProgress = nil
             await load()
         }
     }
