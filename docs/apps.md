@@ -46,6 +46,15 @@ other apps can open and save documents on it directly.
 The iOS app isn't on the App Store yet; it will come to TestFlight
 first.
 
+## Try it without a Pi
+
+While no airlock is found, the first screen offers **Try a Demo
+Airlock**: a pretend airlock with drives, devices and files that lives
+inside the app. Browse, upload, eject, format, flash and check
+filesystems on it to see how everything works; nothing leaves your
+device. **End Demo** in its ⋯ menu removes it, and it goes by itself
+once a real airlock turns up.
+
 ## What the apps need
 
 - An Airlock on the same network (see [Installation](/install)).

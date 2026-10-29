@@ -18,6 +18,11 @@ App Store: one bundle ID everywhere and a sandboxed Mac App Store build.
   (`AirlockScreenshots`, `AirlockCompanionScreenshots`), which walk the
   main screens for App Store screenshots.
 - Site: **Privacy** and **Support** pages.
+- **Demo mode** in the apps: **Try a Demo Airlock** on the first screen
+  (while no airlock is found) adds a pretend airlock with drives,
+  devices and files that lives inside the app, for trying everything
+  without a Pi, and for App Review. It answers the real API's requests
+  in-process (`DemoAirlock`), so every screen runs its real code.
 - **`AIRLOCK_NAME`** in `install.sh`: the name the apps and Finder show
   ("Airlock on <hostname>" by default). Upgrades keep a custom name,
   including a hand-edited one; `AIRLOCK_NAME=default` resets it.
@@ -46,6 +51,13 @@ App Store: one bundle ID everywhere and a sandboxed Mac App Store build.
   (its change event, plus a check every 3 s) and releases its drives
   as for a remove; a coldplug no longer mounts partitions of an empty
   slot.
+- **iOS Files:** locations went stale: files changed in the app, in
+  Finder or the web UI didn't show, and a formatted card looked empty.
+  The extension now works out what changed by listing the folders Files
+  knows again, and the app asks Files to check after drive changes, its
+  own file changes and on returning to the foreground.
+- **iOS:** the main screen's footer stopped short of the bottom edge;
+  the upload and download status line was cut off on narrow screens.
 - **iOS Files:** a sync-problem badge on Airlock that never cleared,
   after the airlock had been briefly unreachable, including on
   locations added for a newly plugged-in drive.
