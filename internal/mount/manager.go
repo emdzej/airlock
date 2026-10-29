@@ -89,6 +89,12 @@ type Manager struct {
 	ops      map[string]string // disk kernel name → running operation
 	inflight map[string]int    // disk kernel name → mounts in progress
 
+	// deviceSize reads a block device's size (DeviceSize; swapped in
+	// tests). noMedium counts consecutive media checks that found a disk
+	// with mounted drives at size 0.
+	deviceSize func(kernel string) int64
+	noMedium   map[string]int
+
 	notifyMu sync.Mutex // serializes listener calls
 }
 
@@ -121,6 +127,9 @@ func NewManager(baseDir string, listener Listener) (*Manager, error) {
 		drives:   make(map[string]*Drive),
 		ops:      make(map[string]string),
 		inflight: make(map[string]int),
+
+		deviceSize: DeviceSize,
+		noMedium:   make(map[string]int),
 	}
 	m.cond = sync.NewCond(&m.mu)
 	return m, nil
@@ -236,7 +245,12 @@ func (m *Manager) Snapshot() Snapshot {
 // Run consumes udev events from events until ctx is done. On shutdown it does
 // not automatically unmount drives — that is the caller's decision (via
 // EjectAll) so a systemctl stop doesn't yank users' data mid-write.
+//
+// It also checks every mediaCheckInterval for a medium pulled out of a
+// reader that stays attached, in case its udev change event was missed.
 func (m *Manager) Run(ctx context.Context, events <-chan UEvent) {
+	ticker := time.NewTicker(mediaCheckInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -246,7 +260,84 @@ func (m *Manager) Run(ctx context.Context, events <-chan UEvent) {
 				return
 			}
 			m.handle(ev)
+		case <-ticker.C:
+			for _, disk := range m.checkMedia() {
+				m.mediaRemoved(disk)
+			}
 		}
+	}
+}
+
+// mediaCheckInterval is how often Run looks for disks that lost their
+// medium; the kernel itself polls removable media every 2 s.
+const mediaCheckInterval = 3 * time.Second
+
+// checkMedia returns the disks with mounted drives that have read size 0
+// on two checks in a row: the medium is gone. Two, so a single odd read
+// can't eject anything.
+func (m *Manager) checkMedia() []string {
+	m.mu.Lock()
+	disks := map[string]bool{}
+	for _, d := range m.drives {
+		disks[driveDisk(d)] = true
+	}
+	m.mu.Unlock()
+
+	var gone []string
+	for disk := range m.noMedium {
+		if !disks[disk] {
+			delete(m.noMedium, disk)
+		}
+	}
+	for disk := range disks {
+		if m.deviceSize(disk) > 0 {
+			delete(m.noMedium, disk)
+			continue
+		}
+		m.noMedium[disk]++
+		if m.noMedium[disk] >= 2 {
+			delete(m.noMedium, disk)
+			gone = append(gone, disk)
+		}
+	}
+	return gone
+}
+
+// driveDisk is the whole disk a drive lives on.
+func driveDisk(d *Drive) string {
+	if d.Parent != "" {
+		return d.Parent
+	}
+	return d.Kernel
+}
+
+// mediaRemoved releases the drives on disk after its medium was pulled
+// out without an eject. A reader that stays attached reports the empty
+// slot (size 0, a udev change event), but the kernel keeps partitions
+// that are still mounted, so no remove event comes. Unmount lazily, as
+// for a remove, then have the kernel drop the dead partitions.
+func (m *Manager) mediaRemoved(disk string) {
+	m.mu.Lock()
+	var targets []string
+	for k, d := range m.drives {
+		if driveDisk(d) == disk {
+			targets = append(targets, k)
+		}
+	}
+	m.mu.Unlock()
+	if len(targets) == 0 {
+		return
+	}
+	slog.Info("medium removed without eject — releasing its drives", "disk", disk, "drives", len(targets))
+	for _, k := range targets {
+		if err := m.unmount(k, true); err != nil && !errors.Is(err, ErrNotMounted) {
+			slog.Error("unmount failed", "kernel", k, "err", err)
+		}
+	}
+	// Best-effort: fails (and changes nothing) if something still holds
+	// a partition.
+	if out, err := exec.Command("/sbin/blockdev", "--rereadpt", "/dev/"+disk).CombinedOutput(); err != nil {
+		slog.Debug("re-read partition table", "disk", disk, "err", err, "out", strings.TrimSpace(string(out)))
 	}
 }
 
@@ -256,6 +347,11 @@ func (m *Manager) handle(ev UEvent) {
 	}
 	switch ev.Action {
 	case ActionAdd, ActionChange:
+		// A whole disk at size 0: the reader's medium is gone.
+		if parentKernel(ev.KernelName) == "" && m.deviceSize(ev.KernelName) == 0 {
+			m.mediaRemoved(ev.KernelName)
+			return
+		}
 		// We mount a device only when it has a supported filesystem. A whole
 		// disk with a partition table will emit change/add events for its
 		// partitions separately; ignore the disk-level add unless the disk
@@ -297,6 +393,13 @@ func (m *Manager) mount(ev UEvent) error {
 	// root disk may carry extra, unmounted partitions).
 	if devices.SystemDisks()[disk] {
 		slog.Info("skipping — disk backs the running system", "dev", devNode, "disk", disk)
+		return nil
+	}
+
+	// udev still knows the filesystem of a partition whose medium is
+	// gone (a coldplug replay after a card was pulled): nothing to mount.
+	if m.deviceSize(disk) == 0 {
+		slog.Info("skipping — no medium", "dev", devNode, "disk", disk)
 		return nil
 	}
 
