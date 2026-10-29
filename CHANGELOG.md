@@ -6,6 +6,38 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [Unreleased]
+
+### Added
+
+- **Screenshot UI tests** for the iOS and Mac apps
+  (`AirlockScreenshots`, `AirlockCompanionScreenshots`), which walk the
+  main screens for App Store screenshots.
+- Site: **Privacy** and **Support** pages.
+- **`AIRLOCK_NAME`** in `install.sh`: the name the apps and Finder show
+  ("Airlock on <hostname>" by default). Upgrades keep a custom name,
+  including a hand-edited one; `AIRLOCK_NAME=default` resets it.
+- **Mac App Store build**: the Xcode project builds the Mac app
+  sandboxed (`AppStore.entitlements`); the DMG stays unsandboxed.
+
+### Changed
+
+- **Bundle ID** `pl.emdzej.airlock.companion` on every platform (was
+  `pl.emdzej.airlock` on iOS, `com.emdzej.airlock.companion` on the
+  Mac). The Mac app copies its settings over from the old ID once; the
+  iOS app installs as a new app.
+- **Partition actions** (Mount, Rename, Check Filesystem) have a visible
+  **…** button on each partition row, not only long press or right-click.
+- The Mac app unmounts with `FileManager.unmountVolume` instead of
+  running `/sbin/umount`, which the sandbox doesn't allow.
+
+### Fixed
+
+- **Mac:** screens opened from an airlock (files, a device) had no back
+  button; they now have one, and ⌘[.
+- **Mac:** the Format, Flash, Save Image and Check sheets laid their
+  fields out in a bare column; they use grouped sections like iOS.
+
 ## [0.5.0] — 2026-10-28
 
 Native apps release: an iOS/iPadOS app, and a Mac companion that now
