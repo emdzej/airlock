@@ -6,7 +6,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
-## [Unreleased]
+## [0.6.0] — 2026-10-29
+
+Cards pulled without ejecting no longer leave stale shares, the Pi's
+name can be set and survives upgrades, and the apps get ready for the
+App Store: one bundle ID everywhere and a sandboxed Mac App Store build.
 
 ### Added
 
@@ -33,8 +37,16 @@ changes are allowed between minor versions.
 
 ### Fixed
 
+- **A card pulled from a reader without ejecting** left its shares
+  mounted and listed: the reader stays attached, so the kernel reports
+  only an empty slot and keeps the mounted partitions, and no udev
+  remove arrives. airlockd now watches for a disk whose medium is gone
+  (its change event, plus a check every 3 s) and releases its drives
+  as for a remove; a coldplug no longer mounts partitions of an empty
+  slot.
 - **iOS Files:** a sync-problem badge on Airlock that never cleared,
-  after the airlock had been briefly unreachable.
+  after the airlock had been briefly unreachable, including on
+  locations added for a newly plugged-in drive.
 - **Mac:** screens opened from an airlock (files, a device) had no back
   button; they now have one, and ⌘[.
 - **Mac:** the Format, Flash, Save Image and Check sheets laid their
