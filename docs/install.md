@@ -130,6 +130,7 @@ config without touching state on mounted drives.
 | `AIRLOCK_BINARY_URL`    | Fully override the binary tarball URL (checked against `<url>.sha256` if present) |
 | `AIRLOCK_LOCAL_BINARY`  | Path to a locally-built binary — skips download                     |
 | `AIRLOCK_PREFIX`        | Install prefix (default `/usr/local`)                               |
+| `AIRLOCK_NAME`          | Name the apps and Finder show (see [Renaming an airlock](#renaming-an-airlock)) |
 | `AIRLOCK_HARDEN_USB`    | `1` to also block HID / CDC-* USB drivers (see "Additional hardening") |
 | `AIRLOCK_FAST_BOOT`     | `1` to disable services + BT firmware not needed on a headless appliance |
 | `AIRLOCK_DISABLE_WIFI`  | `1` to disable the Wi-Fi radio (only if this Pi is on Ethernet)      |
@@ -300,6 +301,24 @@ action per device.
 | Windows Explorer     | `\\<host>\<share>` (may require enabling "insecure guest logons" via GPO)  |
 | Linux (Nautilus)     | Files sidebar → Other Locations → `smb://<host>.local/`                    |
 | CLI (`smbclient`)    | `smbclient -N //<host>.local/<share>`                                      |
+
+### Renaming an airlock
+
+The apps and Finder's Network sidebar show the airlock's Bonjour name,
+“Airlock on &lt;hostname&gt;” by default. To call it something else, run the
+installer with `AIRLOCK_NAME` (on the image too: it upgrades in place):
+
+```sh
+curl -fsSL https://github.com/emdzej/airlock/releases/latest/download/install.sh \
+  | sudo AIRLOCK_NAME="My Airlock" bash
+```
+
+The hostname, the web UI address and the SMB paths stay as they are.
+Later upgrades without `AIRLOCK_NAME` keep the name, including one you
+set by editing `/etc/avahi/services/airlock.service` yourself;
+`AIRLOCK_NAME=default` goes back to “Airlock on &lt;hostname&gt;”. The apps
+show the new name within seconds; **Forget** the old entry, which stays
+as offline.
 
 ## Additional hardening (optional)
 

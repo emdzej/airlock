@@ -22,6 +22,8 @@
 #                         (checked against <url>.sha256 if one exists)
 #   AIRLOCK_LOCAL_BINARY  path to a locally-built binary (skips download)
 #   AIRLOCK_PREFIX        install prefix (default: /usr/local)
+#   AIRLOCK_NAME          name shown by the apps and Finder (default: keep the
+#                         current one; "default" = "Airlock on <hostname>")
 #   AIRLOCK_HARDEN_USB    set to 1 to block HID / CDC-* USB drivers (opt-in)
 #   AIRLOCK_FAST_BOOT     set to 1 to disable services + BT firmware not
 #                         needed on a headless appliance (~7-10s off boot)
@@ -41,6 +43,7 @@ VERSION="${AIRLOCK_VERSION:-}"
 PREFIX="${AIRLOCK_PREFIX:-/usr/local}"
 BINARY_URL="${AIRLOCK_BINARY_URL:-}"
 LOCAL_BINARY="${AIRLOCK_LOCAL_BINARY:-}"
+NAME="${AIRLOCK_NAME:-}"
 HARDEN_USB="${AIRLOCK_HARDEN_USB:-0}"
 FAST_BOOT="${AIRLOCK_FAST_BOOT:-0}"
 DISABLE_WIFI="${AIRLOCK_DISABLE_WIFI:-0}"
@@ -219,8 +222,33 @@ touch /etc/samba/smb.conf.d/airlock.conf
 chmod 0644 /etc/samba/smb.conf.d/airlock.conf
 
 # --- Avahi service ---
+# The advertised name is what the apps and Finder show. AIRLOCK_NAME sets
+# it; without it a re-run keeps the current one, so an upgrade doesn't
+# undo a rename. "default" goes back to the bundle's "Airlock on %h".
+AVAHI_SERVICE=/etc/avahi/services/airlock.service
+name_line() { grep -m1 '<name' "$1" 2>/dev/null || true; }
+keep_line=""
+if [[ -z "$NAME" ]]; then
+    keep_line=$(name_line "$AVAHI_SERVICE")
+    [[ "$keep_line" == "$(name_line "$BUNDLE/$AVAHI_SERVICE")" ]] && keep_line=""
+fi
 log "installing avahi service advertisement"
-install -D -m 0644 "$BUNDLE/etc/avahi/services/airlock.service" /etc/avahi/services/airlock.service
+install -D -m 0644 "$BUNDLE/etc/avahi/services/airlock.service" "$AVAHI_SERVICE"
+if [[ -n "$NAME" && "$NAME" != "default" ]]; then
+    # XML-escape. No replace-wildcards: the name is taken literally,
+    # % included.
+    esc=$(printf '%s' "$NAME" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+    keep_line="  <name>$esc</name>"
+    log "advertising as: $NAME"
+fi
+if [[ -n "$keep_line" ]]; then
+    # awk -v would interpret backslashes in the name; ENVIRON doesn't.
+    LINE="$keep_line" awk '!done && /<name/ { print ENVIRON["LINE"]; done = 1; next } { print }' \
+        "$AVAHI_SERVICE" > "$AVAHI_SERVICE.tmp"
+    chmod 0644 "$AVAHI_SERVICE.tmp"
+    mv "$AVAHI_SERVICE.tmp" "$AVAHI_SERVICE"
+    [[ -n "$NAME" ]] || log "keeping the advertised name: $(sed -e 's/<[^>]*>//g' -e 's/^ *//' <<<"$keep_line")"
+fi
 
 # --- Mount base dir ---
 mkdir -p /mnt/airlock
