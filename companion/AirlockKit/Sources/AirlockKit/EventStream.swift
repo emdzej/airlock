@@ -94,7 +94,7 @@ public final class EventStream: NSObject, @unchecked Sendable {
         receivedEvent = false
         responseError = nil
 
-        let config = URLSessionConfiguration.default
+        let config = AirlockNetwork.configuration()
         // No caching: SSE responses should never be cached.
         config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         config.urlCache = nil

@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu() {
         let menu = NSMenu()
-        MenuBuilder.build(into: menu, hosts: discovery.hosts,
+        MenuBuilder.build(into: menu, hosts: discovery.networkHosts,
                           mounts: mounts, actions: actions)
         statusItem.menu = menu
     }

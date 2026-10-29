@@ -22,7 +22,7 @@ public struct AirlockClient: Sendable {
     public let baseURL: URL
     private let session: URLSession
 
-    public init(baseURL: URL, session: URLSession = .shared) {
+    public init(baseURL: URL, session: URLSession = AirlockNetwork.session) {
         self.baseURL = baseURL
         self.session = session
     }

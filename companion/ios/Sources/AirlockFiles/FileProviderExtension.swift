@@ -223,9 +223,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
 
     func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier,
                     request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
-        if containerItemIdentifier == .workingSet || containerItemIdentifier == .trashContainer {
-            return EmptyEnumerator()
-        }
+        if containerItemIdentifier == .workingSet { return WorkingSetEnumerator(ext: self) }
+        if containerItemIdentifier == .trashContainer { return EmptyEnumerator() }
         guard let path = items.path(for: containerItemIdentifier) else { throw NSFileProviderError(.noSuchItem) }
         return FolderEnumerator(ext: self, path: path)
     }
@@ -266,9 +265,62 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     }
 }
 
-/// Lists one folder. airlockd can't say what changed since a point in
-/// time, so a change request answers "anchor expired" and Files lists
-/// the folder again.
+/// What changed in some folders since Files last asked, worked out by
+/// listing them again: airlockd has no change feed. Entries are
+/// reported as updated, known items that are gone as deleted (with
+/// everything under them).
+extension FileProviderExtension {
+    func changes(in folders: [String]) async throws -> (updated: [NSFileProviderItem], deleted: [NSFileProviderItemIdentifier]) {
+        let (client, drive) = try ready()
+        let writable = try await writable(client, drive)
+        var updated: [NSFileProviderItem] = []
+        var deleted: [NSFileProviderItemIdentifier] = []
+        var gone: [String] = []
+        for folder in folders where !gone.contains(where: { folder == $0 || folder.hasPrefix($0 + "/") }) {
+            let listing: Listing
+            do {
+                listing = try await client.list(drive.share, path: folder)
+            } catch let e as AirlockError where e.status == 404 {
+                // The folder went (deleted elsewhere, or the drive was
+                // formatted): drop it and everything known under it.
+                guard folder != "/" else { throw NSFileProviderError(.noSuchItem) }
+                deleted += items.identifiers(under: folder).map { NSFileProviderItemIdentifier($0) }
+                items.remove(folder)
+                gone.append(folder)
+                continue
+            }
+            updated += listing.entries.map { makeItem($0, in: folder, writable: writable) }
+            let names = Set(listing.entries.map(\.name))
+            for child in items.children(of: folder) where !names.contains((child.path as NSString).lastPathComponent) {
+                deleted += items.identifiers(under: child.path).map { NSFileProviderItemIdentifier($0) }
+                items.remove(child.path)
+            }
+        }
+        reached()
+        return (updated, deleted)
+    }
+
+    /// Anchors only need to move forward: every change request lists
+    /// the folders afresh.
+    static func newAnchor() -> NSFileProviderSyncAnchor {
+        NSFileProviderSyncAnchor(Data("\(Date().timeIntervalSince1970)".utf8))
+    }
+
+    func reportChanges(in folders: @escaping () -> [String], to observer: NSFileProviderChangeObserver) {
+        Task {
+            do {
+                let (updated, deleted) = try await changes(in: folders())
+                if !updated.isEmpty { observer.didUpdate(updated) }
+                if !deleted.isEmpty { observer.didDeleteItems(withIdentifiers: deleted) }
+                observer.finishEnumeratingChanges(upTo: Self.newAnchor(), moreComing: false)
+            } catch {
+                observer.finishEnumeratingWithError(mapError(error))
+            }
+        }
+    }
+}
+
+/// Lists one folder; changes come from listing it again.
 final class FolderEnumerator: NSObject, NSFileProviderEnumerator {
     let ext: FileProviderExtension
     let path: String
@@ -296,15 +348,50 @@ final class FolderEnumerator: NSObject, NSFileProviderEnumerator {
     }
 
     func enumerateChanges(for observer: NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor) {
-        observer.finishEnumeratingWithError(NSFileProviderError(.syncAnchorExpired))
+        let path = self.path
+        ext.reportChanges(in: { [path] }, to: observer)
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        completionHandler(NSFileProviderSyncAnchor(Data("\(Date().timeIntervalSince1970)".utf8)))
+        completionHandler(FileProviderExtension.newAnchor())
     }
 }
 
-/// Working set and trash: airlockd has neither, so nothing to report.
+/// The working set: everything Files keeps up to date. Its items are the
+/// root's; its changes cover every folder Files has seen, which is what
+/// the app's signalEnumerator(for: .workingSet) asks for.
+final class WorkingSetEnumerator: NSObject, NSFileProviderEnumerator {
+    let ext: FileProviderExtension
+
+    init(ext: FileProviderExtension) {
+        self.ext = ext
+    }
+
+    func invalidate() {}
+
+    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
+        Task {
+            do {
+                let (updated, _) = try await ext.changes(in: ["/"])
+                observer.didEnumerate(updated)
+                observer.finishEnumerating(upTo: nil)
+            } catch {
+                observer.finishEnumeratingWithError(ext.mapError(error))
+            }
+        }
+    }
+
+    func enumerateChanges(for observer: NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor) {
+        let items = ext.items
+        ext.reportChanges(in: { items.knownFolders() }, to: observer)
+    }
+
+    func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
+        completionHandler(FileProviderExtension.newAnchor())
+    }
+}
+
+/// Trash: airlockd deletes for good, so there's nothing in it.
 final class EmptyEnumerator: NSObject, NSFileProviderEnumerator {
     private static let anchor = NSFileProviderSyncAnchor(Data("0".utf8))
 

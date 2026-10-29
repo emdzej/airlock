@@ -72,8 +72,10 @@ struct HostView: View {
         }
         .contextMenu {
             Button("Eject", systemImage: "eject") { eject(drive) }
-            Button("Copy SMB URL", systemImage: "doc.on.doc") {
-                Pasteboard.copy(smbURL(drive))
+            if !host.isDemo {
+                Button("Copy SMB URL", systemImage: "doc.on.doc") {
+                    Pasteboard.copy(smbURL(drive))
+                }
             }
         }
         .disabled(!host.isReachable || drive.ejecting)
@@ -150,8 +152,10 @@ struct HostView: View {
         Menu {
             Button("Eject All", systemImage: "eject") { confirmEjectAll = true }
                 .disabled(!host.isReachable || host.drives.isEmpty)
-            Link(destination: host.baseURL) {
-                Label("Open Web UI", systemImage: "safari")
+            if !host.isDemo {
+                Link(destination: host.baseURL) {
+                    Label("Open Web UI", systemImage: "safari")
+                }
             }
             Divider()
             Link(destination: Links.guide) {
@@ -160,7 +164,11 @@ struct HostView: View {
             Button("About Airlock", systemImage: "info.circle") { showAbout = true }
             if let forget {
                 Divider()
-                Button("Forget This Airlock", systemImage: "trash", role: .destructive, action: forget)
+                if host.isDemo {
+                    Button("End Demo", systemImage: "stop.circle", action: forget)
+                } else {
+                    Button("Forget This Airlock", systemImage: "trash", role: .destructive, action: forget)
+                }
             }
         } label: {
             Label("More", systemImage: "ellipsis.circle")
@@ -205,10 +213,13 @@ private struct HostHeader: View {
                 .padding(10)
                 .background(Color.brand.opacity(0.12), in: .rect(cornerRadius: 20, style: .continuous))
             VStack(alignment: .leading, spacing: 4) {
-                Text(host.serviceName)
-                    .font(.title2.weight(.bold))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
+                HStack(spacing: 8) {
+                    Text(host.serviceName)
+                        .font(.title2.weight(.bold))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    if host.isDemo { Badge(text: "Demo", tint: .brand) }
+                }
                 HStack(spacing: 6) {
                     Image(systemName: "circle.fill")
                         .font(.system(size: 8))
@@ -219,8 +230,8 @@ private struct HostHeader: View {
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
                 }
-                Text(host.hostname)
-                    .font(.caption.monospaced())
+                Text(host.isDemo ? "Runs inside this app · nothing is changed for real" : host.hostname)
+                    .font(host.isDemo ? .caption : .caption.monospaced())
                     .foregroundStyle(.tertiary)
             }
             Spacer(minLength: 0)

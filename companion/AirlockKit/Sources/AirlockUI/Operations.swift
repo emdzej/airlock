@@ -90,7 +90,7 @@ final class Downloader: NSObject, ObservableObject {
             }
         }
         let t = Task { () throws -> URL in
-            let config = URLSessionConfiguration.default
+            let config = AirlockNetwork.configuration()
             config.timeoutIntervalForRequest = 900
             config.timeoutIntervalForResource = .infinity
             let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)

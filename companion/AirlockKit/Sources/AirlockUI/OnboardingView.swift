@@ -3,6 +3,9 @@ import SwiftUI
 /// Shown while no airlock has been found: a searching hatch, and what
 /// to check — set one up, same network, permission, try the browser.
 struct OnboardingView: View {
+    /// Adds the in-app demo airlock.
+    var startDemo: () -> Void = {}
+
     var body: some View {
         ScrollView {
             VStack(spacing: 28) {
@@ -47,6 +50,22 @@ struct OnboardingView: View {
                             Label("Open airlock.local", systemImage: "arrow.up.right.square")
                         }
                     }
+                }
+                .frame(maxWidth: 520)
+
+                VStack(spacing: 10) {
+                    Button(action: startDemo) {
+                        Label("Try a Demo Airlock", systemImage: "play.circle.fill")
+                            .font(.headline)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    Text("No Raspberry Pi needed: a pretend airlock with drives and files, inside the app.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: 520)
 

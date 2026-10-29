@@ -217,7 +217,7 @@ final class ActionCenter: NSObject {
         var onlineHosts = Set<String>()
         var visibleKeys = Set<String>()
         var ejectingKeys = Set<String>()
-        for host in discovery.hosts where host.isReachable {
+        for host in discovery.networkHosts where host.isReachable {
             onlineHosts.insert(host.hostname)
             for drive in host.drives {
                 let key = mounts.key(host: host, drive: drive)
@@ -257,7 +257,7 @@ final class ActionCenter: NSObject {
         guard Preferences.shared.autoMountAll else { return }
         let openAfter = Preferences.shared.openOnMount
         let now = Date()
-        for host in discovery.hosts where host.isReachable {
+        for host in discovery.networkHosts where host.isReachable {
             for drive in host.drives {
                 let key = mounts.key(host: host, drive: drive)
                 guard !drive.ejecting,
@@ -298,7 +298,7 @@ final class ActionCenter: NSObject {
     /// macOS dropping a dead server shouldn't block re-mount later.
     private func externallyUnmounted(_ key: String) {
         let hostName = String(key.split(separator: "/", maxSplits: 1).first ?? "")
-        let online = discovery.hosts.first { $0.hostname == hostName }?.isReachable ?? false
+        let online = discovery.networkHosts.first { $0.hostname == hostName }?.isReachable ?? false
         if online { dismissed.insert(key) }
     }
 

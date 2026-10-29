@@ -65,6 +65,27 @@ final class ItemMap: @unchecked Sendable {
         saveLocked()
     }
 
+    /// Folders Files has seen: the root and the parent of every known
+    /// path, shallowest first.
+    func knownFolders() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        var folders: Set<String> = ["/"]
+        for path in idByPath.keys { folders.insert(parentPath(path)) }
+        return folders.sorted { ($0.split(separator: "/").count, $0) < ($1.split(separator: "/").count, $1) }
+    }
+
+    /// Known items directly in dir.
+    func children(of dir: String) -> [(path: String, id: String)] {
+        lock.lock(); defer { lock.unlock() }
+        return idByPath.filter { parentPath($0.key) == dir && $0.key != dir }.map { ($0.key, $0.value) }
+    }
+
+    /// Known items at or under path.
+    func identifiers(under path: String) -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return idByPath.filter { $0.key == path || $0.key.hasPrefix(path + "/") }.map(\.value)
+    }
+
     private func saveLocked() {
         if let data = try? JSONEncoder().encode(pathByID) {
             try? data.write(to: file, options: .atomic)

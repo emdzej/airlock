@@ -31,7 +31,7 @@ final class OperationStream: NSObject, URLSessionDataDelegate, @unchecked Sendab
     static func run(_ request: URLRequest, uploadFrom file: URL?) -> AsyncThrowingStream<OpUpdate, Error> {
         AsyncThrowingStream { continuation in
             let op = OperationStream(continuation)
-            let config = URLSessionConfiguration.default
+            let config = AirlockNetwork.configuration()
             config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
             config.urlCache = nil
             // Idle timeout between bytes: mkfs on a big drive or the final

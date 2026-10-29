@@ -13,6 +13,19 @@ final class FilesDomains {
     private var running = false
     private var pending: [HostState]?
 
+    /// Asks Files to fetch what changed in every location (the
+    /// extension lists the folders Files knows again). After drive
+    /// changes, the app's own file changes, and on coming back to the
+    /// foreground: airlockd has no change feed Files could follow.
+    func signalChanges() {
+        Task {
+            guard let domains = try? await NSFileProviderManager.domains() else { return }
+            for domain in domains {
+                try? await NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet)
+            }
+        }
+    }
+
     func update(_ hosts: [HostState]) {
         pending = hosts
         guard !running else { return }
@@ -23,6 +36,7 @@ final class FilesDomains {
                 await reconcile(hosts)
             }
             running = false
+            signalChanges()
         }
     }
 

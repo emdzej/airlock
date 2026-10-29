@@ -123,6 +123,9 @@ extension Notification.Name {
     /// Reload what isn't live (device list, open folder): posted by the
     /// Mac companion's View › Refresh (⌘R).
     public static let airlockRefresh = Notification.Name("pl.emdzej.airlock.refresh")
+    /// Posted after the app changes files on a drive (upload, new
+    /// folder, rename, delete), so the iOS app can tell Files.
+    public static let airlockFilesChanged = Notification.Name("pl.emdzej.airlock.files-changed")
 }
 
 extension ToolbarItemPlacement {

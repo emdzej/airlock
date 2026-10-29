@@ -34,6 +34,9 @@ public final class HostState: ObservableObject, Identifiable {
         self.port = port
     }
 
+    /// The in-app demo airlock (DemoAirlock), not a device.
+    public var isDemo: Bool { hostname == DemoAirlock.hostname }
+
     public var baseURL: URL {
         URL(string: "http://\(hostname):\(port)")!
     }

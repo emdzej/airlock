@@ -66,8 +66,29 @@ public final class Discovery: NSObject, ObservableObject {
         onChange?()
     }
 
+    /// Real airlocks only: the Mac menu, Files locations and mounts
+    /// leave the demo out.
+    public var networkHosts: [HostState] { hosts.filter { !$0.isDemo } }
+
+    /// Adds the demo airlock (in-app, see DemoAirlock), fresh each time.
+    /// It isn't remembered, and goes when a real airlock turns up.
+    public func startDemo() {
+        guard !hosts.contains(where: \.isDemo) else { return }
+        DemoAirlock.shared.queue.sync { DemoAirlock.shared.reset() }
+        let state = HostState(serviceName: DemoAirlock.serviceName, hostname: DemoAirlock.hostname, port: 80)
+        state.onChange = { [weak self] in self?.onChange?() }
+        hosts.append(state)
+        state.startEventStream()
+        onChange?()
+    }
+
+    private func endDemo() {
+        for host in hosts where host.isDemo { host.stopEventStream() }
+        hosts.removeAll(where: \.isDemo)
+    }
+
     private func persist() {
-        let items = hosts.map { host in
+        let items = networkHosts.map { host in
             HostStore.Persisted(
                 serviceName: host.serviceName,
                 hostname: host.hostname,
@@ -110,6 +131,7 @@ public final class Discovery: NSObject, ObservableObject {
             onChange?()
             return
         }
+        endDemo()
         let state = HostState(serviceName: service.name, hostname: hostname, port: port)
         state.onChange = { [weak self] in self?.persist(); self?.onChange?() }
         hosts.append(state)

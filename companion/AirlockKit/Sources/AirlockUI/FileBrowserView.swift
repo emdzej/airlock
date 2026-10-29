@@ -164,7 +164,16 @@ struct FileBrowserView: View {
     private var statusBar: some View {
         if let status = uploadStatus ?? downloadStatus {
             VStack(alignment: .leading, spacing: 8) {
-                Text(status).font(.footnote).monospacedDigit().lineLimit(1)
+                // The name takes the room and shortens in the middle, where
+                // file names differ least; the byte counts stay whole.
+                HStack(spacing: 8) {
+                    Text(status).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    if let detail = statusDetail {
+                        Text(detail).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                    }
+                }
+                .font(.footnote)
                 if let fraction = statusFraction {
                     ProgressView(value: fraction)
                 } else {
@@ -187,9 +196,21 @@ struct FileBrowserView: View {
     }
 
     private var downloadStatus: String? {
-        guard let name = downloadingName else { return nil }
-        let total = downloader.expected > 0 ? " / \(bytes(downloader.expected))" : ""
-        return "Downloading \(name) · \(bytes(downloader.received))\(total)"
+        downloadingName.map { "Downloading \($0)" }
+    }
+
+    /// "12.3 MB / 25 MB", or just what's done when the total is unknown.
+    private var statusDetail: String? {
+        let sent: Int64, total: Int64
+        if uploadStatus != nil {
+            guard let p = uploadProgress else { return nil }
+            (sent, total) = p
+        } else if downloadingName != nil {
+            (sent, total) = (downloader.received, downloader.expected)
+        } else {
+            return nil
+        }
+        return total > 0 ? "\(bytes(sent)) / \(bytes(total))" : bytes(sent)
     }
 
     // MARK: - Actions
@@ -245,7 +266,6 @@ struct FileBrowserView: View {
                         Task { @MainActor in
                             guard id == uploadID, uploadStatus != nil else { return }
                             uploadProgress = (sent, total)
-                            uploadStatus = "Uploading \(prefix)\(name) · \(bytes(sent)) / \(bytes(total))"
                         }
                     }
                 } catch {
@@ -256,13 +276,19 @@ struct FileBrowserView: View {
             uploadID += 1
             uploadStatus = nil
             uploadProgress = nil
+            NotificationCenter.default.post(name: .airlockFilesChanged, object: nil)
             await load()
         }
     }
 
     private func mutate(_ body: @escaping () async throws -> Void) {
         Task {
-            do { try await body() } catch { failure = error.localizedDescription }
+            do {
+                try await body()
+                NotificationCenter.default.post(name: .airlockFilesChanged, object: nil)
+            } catch {
+                failure = error.localizedDescription
+            }
             await load()
         }
     }

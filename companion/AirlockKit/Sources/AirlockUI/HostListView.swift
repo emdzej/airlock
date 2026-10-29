@@ -30,11 +30,11 @@ public struct HostListView: View {
                         hostRow(host)
                             .contextMenu {
                                 Button("Forget This Airlock", systemImage: "trash", role: .destructive) {
-                                    forgetting = host
+                                    requestForget(host)
                                 }
                             }
                             .swipeActions {
-                                Button("Forget", systemImage: "trash", role: .destructive) { forgetting = host }
+                                Button("Forget", systemImage: "trash", role: .destructive) { requestForget(host) }
                             }
                     }
                 }
@@ -48,17 +48,17 @@ public struct HostListView: View {
             }
             .overlay {
                 if discovery.hosts.isEmpty, compact {
-                    OnboardingView()
+                    OnboardingView(startDemo: startDemo)
                 }
             }
         } detail: {
             if let host = discovery.hosts.first(where: { $0.id == selection }) {
                 NavigationStack {
-                    HostView(host: host) { forgetting = host }
+                    HostView(host: host) { requestForget(host) }
                 }
                 .id(host.id)
             } else if discovery.hosts.isEmpty {
-                OnboardingView()
+                OnboardingView(startDemo: startDemo)
             } else {
                 ContentUnavailableView("Select an airlock", systemImage: "externaldrive.connected.to.line.below")
                     .airlockBackground()
@@ -124,6 +124,18 @@ public struct HostListView: View {
 
     /// With a single airlock (the usual case) on a regular-width layout,
     /// open it straight away instead of showing an empty detail pane.
+    /// Real airlocks ask first; the demo just ends.
+    private func requestForget(_ host: HostState) {
+        guard host.isDemo else { return forgetting = host }
+        if selection == host.id { selection = nil }
+        discovery.forget(host)
+    }
+
+    private func startDemo() {
+        discovery.startDemo()
+        selection = DemoAirlock.serviceName
+    }
+
     private func selectOnlyHost() {
         if selection == nil, discovery.hosts.count == 1 {
             selection = discovery.hosts[0].id
@@ -143,7 +155,10 @@ private struct HostRow: View {
                 .background((host.isReachable ? Color.brand : Color.secondary).opacity(0.12),
                             in: .rect(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
-                Text(host.serviceName).font(.headline)
+                HStack(spacing: 6) {
+                    Text(host.serviceName).font(.headline)
+                    if host.isDemo { Badge(text: "Demo", tint: .brand) }
+                }
                 HStack(spacing: 6) {
                     Circle()
                         .fill(host.isReachable ? Color.green : Color.secondary)
@@ -198,7 +213,12 @@ private struct SidebarFooter: View {
         .tint(.secondary)
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
-        .background { if compact { Rectangle().fill(.bar) } else { Color.black.opacity(0.18) } }
+        // Down to the screen edge, under the home indicator, like a
+        // toolbar; not just to the safe-area line.
+        .background {
+            Group { if compact { Rectangle().fill(.bar) } else { Color.black.opacity(0.18) } }
+                .ignoresSafeArea(edges: .bottom)
+        }
         .overlay(alignment: .top) { Divider() }
     }
 
