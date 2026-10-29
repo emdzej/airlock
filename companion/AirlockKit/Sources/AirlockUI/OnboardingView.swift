@@ -23,6 +23,24 @@ struct OnboardingView: View {
                 }
                 .padding(.horizontal)
 
+                // Up top, so it's seen without scrolling: the way in for
+                // anyone without a Pi yet (and for App Review).
+                VStack(spacing: 10) {
+                    Button(action: startDemo) {
+                        Label("Try a Demo Airlock", systemImage: "play.circle.fill")
+                            .font(.headline)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    Text("No Raspberry Pi needed: a pretend airlock with drives and files, inside the app.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: 520)
+
                 VStack(spacing: 12) {
                     Step(number: 1, systemImage: "cpu",
                          title: "Set up Airlock on a Raspberry Pi",
@@ -50,22 +68,6 @@ struct OnboardingView: View {
                             Label("Open airlock.local", systemImage: "arrow.up.right.square")
                         }
                     }
-                }
-                .frame(maxWidth: 520)
-
-                VStack(spacing: 10) {
-                    Button(action: startDemo) {
-                        Label("Try a Demo Airlock", systemImage: "play.circle.fill")
-                            .font(.headline)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    Text("No Raspberry Pi needed: a pretend airlock with drives and files, inside the app.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: 520)
 

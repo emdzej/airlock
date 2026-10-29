@@ -88,6 +88,17 @@ final class ScreenshotTests: XCTestCase {
         window.sheets.firstMatch.buttons["Cancel"].firstMatch.click()
     }
 
+    /// The window's first screen with its demo button. Only shows while
+    /// no airlock is found, so run it where Bonjour finds none.
+    func testOnboardingScreenshot() throws {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10))
+        XCTAssertTrue(window.buttons["Try a Demo Airlock"].waitForExistence(timeout: 15),
+                      "an airlock was found; run with none on the network")
+        settle()
+        snap(window, "07-demo")
+    }
+
     private func open(_ window: XCUIElement, _ name: String) {
         let row = item(window, name)
         XCTAssertTrue(row.waitForExistence(timeout: 10), "\(name) not listed")

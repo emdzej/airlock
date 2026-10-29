@@ -61,6 +61,17 @@ final class ScreenshotTests: XCTestCase {
         snap("05-format")
     }
 
+    /// The first screen with its demo button. Only shows while no
+    /// airlock is found, so run it where Bonjour finds none.
+    func testOnboardingScreenshot() throws {
+        let demo = app.buttons["Try a Demo Airlock"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15), "an airlock was found; run with none on the network")
+        // Bring the button into view: it's below the steps on iPhone.
+        if !demo.isHittable { app.swipeUp() }
+        settle()
+        snap("06-demo")
+    }
+
     private func open(_ name: String) {
         let item = app.staticTexts[name].firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 10), "\(name) not listed")
