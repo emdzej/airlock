@@ -6,7 +6,11 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
-## [Unreleased]
+## [0.7.0] — 2026-11-06
+
+Report a Problem in the apps: a note and a screenshot to the support
+desk, only when you send one, with the answer back in the app. No
+daemon or API change against 0.6.0.
 
 ### Added
 
