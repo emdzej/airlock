@@ -1,5 +1,6 @@
 import AppKit
 import AirlockKit
+import AirlockUI
 
 /// Renders the current discovery state into an NSMenu, wiring
 /// selectors to methods on the shared ActionCenter.
@@ -90,6 +91,13 @@ enum MenuBuilder {
         }
 
         menu.addItem(NSMenuItem.separator())
+        if Support.isAvailable {
+            let report = NSMenuItem(title: "Report a Problem…",
+                                    action: #selector(ActionCenter.reportProblem(_:)),
+                                    keyEquivalent: "")
+            report.target = actions
+            menu.addItem(report)
+        }
         let prefs = NSMenuItem(title: "Preferences…",
                                action: #selector(ActionCenter.openPreferences(_:)),
                                keyEquivalent: ",")

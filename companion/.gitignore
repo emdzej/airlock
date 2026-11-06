@@ -6,3 +6,6 @@ build/
 DerivedData/
 .swiftpm/
 Package.resolved
+
+# ALIAS product keys (see Alias.xcconfig).
+*.local.xcconfig

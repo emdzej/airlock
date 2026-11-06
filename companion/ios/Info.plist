@@ -15,5 +15,8 @@
         <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
+    <!-- ALIAS product key, from Alias.local.xcconfig; empty hides Report a Problem. -->
+    <key>AliasProductKey</key>
+    <string>$(ALIAS_KEY_IOS)</string>
 </dict>
 </plist>

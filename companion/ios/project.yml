@@ -34,6 +34,11 @@ targets:
     scheme:
       testTargets:
         - AirlockScreenshots
+    # ALIAS product keys (Report a Problem): Alias.xcconfig includes the
+    # gitignored Alias.local.xcconfig when it's there.
+    configFiles:
+      Debug: ../Alias.xcconfig
+      Release: ../Alias.xcconfig
     entitlements:
       path: AirlockMobile.entitlements
       properties:

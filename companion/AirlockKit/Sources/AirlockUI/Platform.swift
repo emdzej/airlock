@@ -55,6 +55,14 @@ enum Pasteboard {
 }
 
 enum Platform {
+    static var isIOS: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
+        #endif
+    }
+
     static var osName: String {
         #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .pad ? "iPadOS" : "iOS"

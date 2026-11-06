@@ -24,6 +24,9 @@ enum AppVersion {
 /// App name, version, and where to read more.
 public struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var hasReports = false
+    @State private var confirmErase = false
+    @State private var eraseResult: String?
 
     public init() {}
 
@@ -75,15 +78,44 @@ public struct AboutView: View {
                     }
                 }
 
+                if Support.isAvailable, hasReports {
+                    Section {
+                        Button("Erase My Reports…", systemImage: "trash", role: .destructive) { confirmErase = true }
+                    } header: {
+                        Text("Problem reports")
+                    } footer: {
+                        Text("Deletes the reports you've sent and their answers at the support desk, and the anonymous id this device sends them with.")
+                    }
+                }
+
                 Section {
                     LabeledContent("Version", value: AppVersion.marketing)
                     LabeledContent("Build", value: AppVersion.build)
                     LabeledContent(Platform.osName, value: Platform.osVersion)
                 } footer: {
-                    Text("Airlock talks only to airlock devices on your local network. No accounts, no tracking.")
+                    Text("Airlock talks only to airlock devices on your local network. No accounts, no tracking. A problem report goes to the support desk only when you send one.")
                 }
             }
             .airlockBackground()
+            .task { hasReports = await Support.hasIdentity() }
+            .confirmationDialog("Erase your problem reports?", isPresented: $confirmErase, titleVisibility: .visible) {
+                Button("Erase", role: .destructive) {
+                    Task {
+                        do {
+                            let n = try await Support.erase()
+                            eraseResult = n == 1 ? "1 report erased." : "\(n) reports erased."
+                            hasReports = false
+                        } catch {
+                            eraseResult = error.localizedDescription
+                        }
+                    }
+                }
+            } message: {
+                Text("They're deleted at the support desk, with support's answers. This can't be undone.")
+            }
+            .alert(eraseResult ?? "", isPresented: Binding(get: { eraseResult != nil }, set: { if !$0 { eraseResult = nil } })) {
+                Button("OK", role: .cancel) {}
+            }
             .navigationTitle("About")
             .inlineNavigationTitle()
             .toolbar {

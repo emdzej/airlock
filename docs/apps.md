@@ -64,4 +64,7 @@ once a real airlock turns up.
   launch.
 
 Nothing leaves your network: the apps talk only to Airlock devices on
-the LAN, with no accounts and no tracking.
+the LAN, with no accounts and no tracking. The one exception is
+**Report a Problem**, which sends your note (and the screenshot, if you
+keep it) to my support desk only when you choose to; the answer comes
+back in the app. See [Privacy](/privacy).

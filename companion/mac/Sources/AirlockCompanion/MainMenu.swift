@@ -93,6 +93,10 @@ enum MainMenu {
     private static func helpMenu(actions: ActionCenter) -> NSMenu {
         let m = NSMenu(title: "Help")
         m.addItem(item("Airlock User Guide", #selector(MenuActions.openGuide(_:)), "?", target: MenuActions.shared))
+        if Support.isAvailable {
+            m.addItem(.separator())
+            m.addItem(item("Report a Problem…", #selector(ActionCenter.reportProblem(_:)), target: actions))
+        }
         return m
     }
 }

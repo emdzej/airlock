@@ -7,6 +7,7 @@ public struct HostListView: View {
     @ObservedObject var discovery: Discovery
     @State private var selection: String?
     @State private var showAbout = false
+    @State private var report: Report?
     @State private var forgetting: HostState?
     /// The real appearance: the sidebar forces dark colours on itself,
     /// and sheets opened from it shouldn't inherit that.
@@ -39,17 +40,21 @@ public struct HostListView: View {
                     }
                 }
             }
-            .navigationTitle("Airlock")
-            .safeAreaInset(edge: .bottom) { SidebarFooter(compact: compact) { showAbout = true } }
-            .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
-            .modifier(SidebarStyle(compact: compact))
-            .sheet(isPresented: $showAbout) {
-                AboutView().sheetFrame(width: 440).environment(\.colorScheme, colorScheme)
-            }
+            // Under the footer, not over it: on top, its scroll view took
+            // the footer's taps.
             .overlay {
                 if discovery.hosts.isEmpty, compact {
                     OnboardingView(startDemo: startDemo)
                 }
+            }
+            .navigationTitle("Airlock")
+            .safeAreaInset(edge: .bottom) {
+                SidebarFooter(compact: compact, showAbout: { showAbout = true }, reportProblem: { askForReport() })
+            }
+            .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
+            .modifier(SidebarStyle(compact: compact))
+            .sheet(isPresented: $showAbout) {
+                AboutView().sheetFrame(width: 440).environment(\.colorScheme, colorScheme)
             }
         } detail: {
             if let host = discovery.hosts.first(where: { $0.id == selection }) {
@@ -77,6 +82,8 @@ public struct HostListView: View {
         } message: {
             Text("It's removed from this list. If it's still on the network, it shows up again the next time Airlock finds it.")
         }
+        .reportProblemSheet($report)
+        .onReceive(NotificationCenter.default.publisher(for: .airlockReportProblem)) { _ in askForReport() }
         .onAppear(perform: selectOnlyHost)
         .onChange(of: discovery.hosts.count) { _, _ in selectOnlyHost() }
     }
@@ -129,6 +136,12 @@ public struct HostListView: View {
         guard host.isDemo else { return forgetting = host }
         if selection == host.id { selection = nil }
         discovery.forget(host)
+    }
+
+    /// The screen's name says where the user was, not what was on it.
+    private func askForReport() {
+        let screen = discovery.hosts.isEmpty ? "Setup" : (selection == nil ? "Airlocks" : "Airlock")
+        report = Report(screen: screen, hosts: discovery.hosts)
     }
 
     private func startDemo() {
@@ -194,10 +207,12 @@ private struct SidebarStyle: ViewModifier {
     }
 }
 
-/// Guide and About, kept small at the bottom of the sidebar.
+/// Guide, Report a Problem and About, kept small at the bottom of the
+/// sidebar.
 private struct SidebarFooter: View {
     let compact: Bool
     let showAbout: () -> Void
+    let reportProblem: () -> Void
 
     var body: some View {
         // Labels when they fit on one line, icons when the column is narrow.
@@ -228,6 +243,13 @@ private struct SidebarFooter: View {
                 Label("User Guide", systemImage: "book")
             }
             Spacer(minLength: 0)
+            if Support.isAvailable {
+                Button(action: reportProblem) {
+                    Label("Report", systemImage: "exclamationmark.bubble")
+                }
+                .accessibilityLabel("Report a Problem")
+                Spacer(minLength: 0)
+            }
             Button(action: showAbout) {
                 Label("About · \(AppVersion.marketing)", systemImage: "info.circle")
                     .monospacedDigit()

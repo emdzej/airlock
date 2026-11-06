@@ -1,7 +1,7 @@
 import AppKit
 import AirlockKit
+import AirlockUI
 import Foundation
-import AirlockKit
 
 /// Objective-C-compatible target that NSMenuItem selectors dispatch
 /// to. Holds references to everything the menu actions need.
@@ -177,6 +177,15 @@ final class ActionCenter: NSObject {
 
     @objc func openMainWindow(_ sender: NSMenuItem) {
         mainWindow.show()
+    }
+
+    /// Report a Problem opens over the Airlock window, so the screenshot
+    /// is of that window (a freshly opened one gets a moment to draw).
+    @objc func reportProblem(_ sender: NSMenuItem) {
+        mainWindow.show()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            NotificationCenter.default.post(name: .airlockReportProblem, object: nil)
+        }
     }
 
     /// Remove a host from the menu and the remembered hosts, after a

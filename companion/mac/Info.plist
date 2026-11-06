@@ -18,6 +18,10 @@
     <string>0.6.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.6.0</string>
+    <!-- ALIAS product key: Xcode fills it in from Alias.local.xcconfig,
+         build.sh with plutil; empty hides Report a Problem. -->
+    <key>AliasProductKey</key>
+    <string>$(ALIAS_KEY_MACOS)</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <!-- Keep the app out of the Dock; menubar-only. -->

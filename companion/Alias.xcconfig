@@ -1,0 +1,11 @@
+// ALIAS, the in-app support desk (Report a Problem). The product keys go
+// in Alias.local.xcconfig next to this file, which is gitignored:
+//
+//   ALIAS_KEY_IOS = <aliasctl keys issue airlock ios>
+//   ALIAS_KEY_MACOS = <aliasctl keys issue airlock macos>
+//
+// A key is a public identifier, not a secret, but it stays out of the
+// repo. Without one, the apps build as before and hide Report a Problem.
+ALIAS_KEY_IOS =
+ALIAS_KEY_MACOS =
+#include? "Alias.local.xcconfig"

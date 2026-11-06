@@ -11,6 +11,7 @@ struct HostView: View {
     @State private var failure: String?
     @State private var confirmEjectAll = false
     @State private var showAbout = false
+    @State private var report: Report?
 
     /// Asks the owner to confirm and forget this airlock.
     var forget: (() -> Void)?
@@ -120,6 +121,7 @@ struct HostView: View {
             .inlineNavigationTitle()
             .toolbar { toolbarContent }
             .sheet(isPresented: $showAbout) { AboutView().sheetFrame(width: 440) }
+            .reportProblemSheet($report)
             .confirmationDialog("Eject every drive on \(host.serviceName)?",
                                 isPresented: $confirmEjectAll, titleVisibility: .visible) {
                 Button("Eject All", role: .destructive, action: ejectAll)
@@ -160,6 +162,11 @@ struct HostView: View {
             Divider()
             Link(destination: Links.guide) {
                 Label("User Guide", systemImage: "book")
+            }
+            if Support.isAvailable {
+                Button("Report a Problem…", systemImage: "exclamationmark.bubble") {
+                    report = Report(screen: host.isDemo ? "Demo airlock" : "Airlock", hosts: [host])
+                }
             }
             Button("About Airlock", systemImage: "info.circle") { showAbout = true }
             if let forget {

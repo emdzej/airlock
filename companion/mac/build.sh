@@ -34,6 +34,16 @@ install -m 0755 "$BIN_DIR/AirlockCompanion"   "$APP/Contents/MacOS/AirlockCompan
 install -m 0644 Info.plist                       "$APP/Contents/Info.plist"
 install -m 0644 assets/AppIcon.icns              "$APP/Contents/Resources/AppIcon.icns"
 
+# ALIAS product key (Report a Problem): $ALIAS_KEY_MACOS, else the one in
+# the gitignored ../Alias.local.xcconfig, else none (the item is hidden).
+# Xcode expands $(ALIAS_KEY_MACOS) itself; here the plist is copied raw.
+ALIAS_KEY="${ALIAS_KEY_MACOS:-}"
+if [[ -z "$ALIAS_KEY" && -f ../Alias.local.xcconfig ]]; then
+  ALIAS_KEY="$(sed -n 's/^ALIAS_KEY_MACOS *= *//p' ../Alias.local.xcconfig | tr -d '[:space:]')"
+fi
+plutil -replace AliasProductKey -string "$ALIAS_KEY" "$APP/Contents/Info.plist"
+echo ">>> ALIAS key: $([[ -n "$ALIAS_KEY" ]] && echo set || echo "none (Report a Problem hidden)")"
+
 # PkgInfo tells the Finder this is an app.
 printf '%s' 'APPL????' > "$APP/Contents/PkgInfo"
 

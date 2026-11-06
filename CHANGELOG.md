@@ -8,10 +8,29 @@ changes are allowed between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Report a Problem** in the apps: the airlock's ⋯ menu and the
+  sidebar footer, and on the Mac Help › Report a Problem… and the
+  menu-bar menu. A note, a screenshot of the app's own window (blacked
+  out where you choose) and a few counts go to the support desk
+  ([ALIAS](https://getalias.support)), only when you send one;
+  support's answer appears under **Your Reports**. No account: an
+  anonymous id in the Keychain. **Erase My Reports** in About deletes
+  them. Builds without an ALIAS product key (`Alias.local.xcconfig`,
+  gitignored) hide it.
+- Site: Privacy covers problem reports.
+
 ### Changed
 
 - The first screen shows **Try a Demo Airlock** above the setup steps,
   where it's seen without scrolling.
+
+### Fixed
+
+- **iOS:** on the first screen (no airlock found yet), User Guide and
+  About in the footer didn't respond: the setup steps were laid over
+  them.
 
 ## [0.6.0] — 2026-10-29
 
