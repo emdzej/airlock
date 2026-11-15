@@ -74,6 +74,12 @@ struct DeviceRow: View {
                         if n != 1 { Badge(text: n == 0 ? "Unpartitioned" : "\(n) partitions") }
                     }
                     if device.readOnly { Badge(text: "Locked", systemImage: "lock.fill", tint: .orange) }
+                    // SMART: only the verdicts worth acting on.
+                    if !device.isEmpty, device.health == .failing {
+                        Badge(text: "Failing", systemImage: "xmark.octagon.fill", tint: .red)
+                    } else if !device.isEmpty, device.health == .warning {
+                        Badge(text: "Health warning", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+                    }
                 }
             }
             Spacer(minLength: 0)
@@ -163,6 +169,8 @@ struct DeviceView: View {
                     Label("Write-protected", systemImage: "lock.fill").foregroundStyle(.secondary)
                 }
             }
+
+            HealthSection(client: host.client, device: device)
 
             if !device.livePartitions.isEmpty {
                 Section {

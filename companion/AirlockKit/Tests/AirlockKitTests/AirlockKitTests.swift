@@ -45,6 +45,56 @@ final class AirlockKitTests: XCTestCase {
         XCTAssertEqual(d.confirmWord(fallback: "FORMAT"), "FORMAT")
     }
 
+    func testDeviceHealthIsOptional() throws {
+        let base = #"{"name":"sdc","path":"/dev/sdc","size_bytes":1,"size_human":"1 B","read_only":false"#
+        let old = try JSONDecoder().decode(Device.self, from: Data((base + "}").utf8))
+        XCTAssertNil(old.health)
+        let new = try JSONDecoder().decode(Device.self, from: Data((base + #","health":"failing"}"#).utf8))
+        XCTAssertEqual(new.health, .failing)
+        XCTAssertTrue(new.health!.isAlarming)
+        let newer = try JSONDecoder().decode(Device.self, from: Data((base + #","health":"degraded"}"#).utf8))
+        XCTAssertEqual(newer.health, .unknown)
+    }
+
+    /// `smart.Report` as airlockd marshals it (ATA drive behind a SAT bridge).
+    func testSmartReportDecodesATA() throws {
+        let json = #"""
+        {"status":"warning","summary":"SMART check passed, with warnings: 3 reallocated sectors.",
+         "warnings":["3 reallocated sectors"],"protocol":"ATA","model":"KINGSTON SV300S37A120G",
+         "serial":"TESTSERIAL","firmware":"600ABBF0","temperature_c":26,"power_on_hours":58192,
+         "power_cycles":312,"percentage_used":7,"reallocated_sectors":3,
+         "attributes":[
+          {"id":5,"name":"Retired_Block_Count","value":100,"worst":100,"thresh":3,"raw":"3","prefailure":true},
+          {"id":194,"name":"Temperature_Celsius","value":26,"worst":68,"thresh":0,"raw":"26 (Min/Max 20/68)"},
+          {"id":1,"name":"Raw_Read_Error_Rate","value":40,"worst":40,"thresh":50,"raw":"0/0","prefailure":true,"failed":"now"}],
+         "checked_at":"2026-11-15T22:10:04.123456789+01:00"}
+        """#
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .custom(AirlockClient.decodeDate)
+        let r = try dec.decode(SmartReport.self, from: Data(json.utf8))
+        XCTAssertEqual(r.status, .warning)
+        XCTAssertTrue(r.hasData)
+        XCTAssertEqual(r.powerOnHours, 58192)
+        XCTAssertEqual(r.reallocatedSectors, 3)
+        XCTAssertNil(r.mediaErrors)
+        XCTAssertEqual(r.attributes.first?.threshold, 3)
+        XCTAssertTrue(r.attributes[2].isFailing)
+        XCTAssertNotNil(r.checkedAt)
+    }
+
+    func testSmartReportDecodesUnsupported() throws {
+        let json = #"""
+        {"status":"unsupported","summary":"This device doesn't report SMART health.",
+         "messages":["/dev/sda: Unknown USB bridge [0x05e3:0x0764 (0x2960)]"],
+         "checked_at":"0001-01-01T00:00:00Z"}
+        """#
+        let r = try JSONDecoder().decode(SmartReport.self, from: Data(json.utf8))
+        XCTAssertEqual(r.status, .unsupported)
+        XCTAssertFalse(r.hasData)
+        XCTAssertTrue(r.attributes.isEmpty)
+        XCTAssertEqual(r.messages.count, 1)
+    }
+
     func testListingDecodesGoTimestamps() throws {
         let json = #"""
         {"path":"/","entries":[

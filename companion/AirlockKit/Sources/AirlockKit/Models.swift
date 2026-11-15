@@ -66,6 +66,9 @@ public struct Device: Codable, Equatable, Hashable, Sendable, Identifiable {
     public let readOnly: Bool
     public let anyPartitionReadOnly: Bool
     public let suggestedFS: String
+    /// airlockd's cached SMART verdict; nil until it has read the drive,
+    /// for media without a medium, and from daemons before SMART support.
+    public let health: SmartReport.Status?
     public let partitions: [Partition]
 
     public var id: String { name }
@@ -95,7 +98,7 @@ public struct Device: Codable, Equatable, Hashable, Sendable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case name, path, model, vendor, serial, transport, partitions
+        case name, path, model, vendor, serial, transport, partitions, health
         case sizeBytes = "size_bytes"
         case sizeHuman = "size_human"
         case ptType = "pt_type"
@@ -118,6 +121,7 @@ public struct Device: Codable, Equatable, Hashable, Sendable, Identifiable {
         readOnly = try c.decode(Bool.self, forKey: .readOnly)
         anyPartitionReadOnly = try c.decodeIfPresent(Bool.self, forKey: .anyPartitionReadOnly) ?? false
         suggestedFS = try c.decodeIfPresent(String.self, forKey: .suggestedFS) ?? "vfat"
+        health = try c.decodeIfPresent(SmartReport.Status.self, forKey: .health)
         // Go encodes an empty slice as null when it was never allocated.
         partitions = try c.decodeIfPresent([Partition].self, forKey: .partitions) ?? []
     }

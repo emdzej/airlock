@@ -87,6 +87,7 @@ public final class DemoAirlock: @unchecked Sendable {
                 "serial": d.serial, "size_bytes": d.size, "size_human": human(d.size),
                 "transport": "usb", "pt_type": d.ptType, "read_only": d.readOnly,
                 "any_partition_read_only": d.readOnly, "suggested_fs": d.suggestedFS,
+                "health": d.size > 0 ? d.smart["status"] ?? NSNull() : NSNull(),
                 "partitions": d.partitions.map { p in
                     [
                         "name": p.name, "size_bytes": p.size, "size_human": human(p.size),
@@ -150,6 +151,13 @@ public final class DemoAirlock: @unchecked Sendable {
             let ext = ["xz": ".img.xz", "gz": ".img.gz"][query["compression"] ?? ""] ?? ".img"
             p.respond(Data(repeating: 0, count: 2 << 20), type: "application/octet-stream",
                       filename: "\(d.vendor)-\(d.model)\(ext)".replacingOccurrences(of: " ", with: "-"))
+        case ("GET", "smart"):
+            guard d.size > 0 else {
+                return p.respondJSON(["status": "unsupported", "summary": "No medium in the slot."])
+            }
+            var report = d.smart
+            report["checked_at"] = ISO8601DateFormatter().string(from: Date())
+            p.respondJSON(report)
         case ("POST", "format"), ("POST", "flash"):
             guard d.size > 0 else { return p.fail(404, "no medium") }
             guard !d.readOnly else { return p.fail(403, "the device is write-protected") }
@@ -369,6 +377,35 @@ struct DemoDevice {
     var readOnly: Bool
     var suggestedFS: String
     var partitions: [DemoPartition]
+    /// The `smart.Report` JSON `GET /api/devices/{name}/smart` serves.
+    var smart: [String: Any] = DemoDevice.noSmart
+
+    /// What airlockd says for SD cards, thumb drives and card readers.
+    static let noSmart: [String: Any] = [
+        "status": "unsupported",
+        "summary": "This device doesn't report SMART health. That's normal for thumb drives, SD cards and most card readers.",
+    ]
+
+    /// A healthy NVMe SSD behind a USB bridge, as smartctl reads it.
+    static let portableSSD: [String: Any] = {
+        let log: [(String, String)] = [
+            ("Critical Warning", "0x00"), ("Temperature", "34 °C"), ("Available Spare", "100%"),
+            ("Available Spare Threshold", "10%"), ("Percentage Used", "2%"),
+            ("Data Units Read", "21934712"), ("Data Units Written", "29841207"),
+            ("Host Read Commands", "402118734"), ("Host Write Commands", "611024556"),
+            ("Controller Busy Time", "1182"), ("Power Cycles", "418"), ("Power On Hours", "1312"),
+            ("Unsafe Shutdowns", "23"), ("Media and Data Integrity Errors", "0"),
+            ("Error Information Log Entries", "0"),
+        ]
+        return [
+            "status": "passed", "summary": "SMART check passed.", "protocol": "NVMe",
+            "model": "Samsung PSSD T7", "serial": "S5SXNG0R401234", "firmware": "SVT01B6Q",
+            "temperature_c": 34, "power_on_hours": 1312, "power_cycles": 418,
+            "percentage_used": 2, "available_spare": 100, "media_errors": 0,
+            "unsafe_shutdowns": 23, "data_written_bytes": Int64(29_841_207) * 512_000,
+            "attributes": log.map { ["name": $0.0, "raw": $0.1] },
+        ]
+    }()
 
     static func seed() -> [DemoDevice] {
         [
@@ -379,7 +416,8 @@ struct DemoDevice {
             DemoDevice(name: "sdb", vendor: "Samsung", model: "Portable SSD T7", serial: "S5SXNG0R401234",
                        size: 1_000_204_886_016, ptType: "gpt", readOnly: false, suggestedFS: "ntfs",
                        partitions: [DemoPartition(name: "sdb1", size: 1_000_202_043_392, fs: "ntfs",
-                                                  label: "BACKUP", uuid: "4E21C7A93B8D1F05")]),
+                                                  label: "BACKUP", uuid: "4E21C7A93B8D1F05")],
+                       smart: DemoDevice.portableSSD),
             DemoDevice(name: "sdc", vendor: "Kingston", model: "DataTraveler 3.0", serial: "60A44C3FAE1234",
                        size: 7_998_537_728, ptType: "dos", readOnly: true, suggestedFS: "vfat",
                        partitions: [DemoPartition(name: "sdc1", size: 7_985_954_816, fs: "vfat",

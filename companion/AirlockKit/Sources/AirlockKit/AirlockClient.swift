@@ -54,6 +54,15 @@ public struct AirlockClient: Sendable {
         try await post(url(["api/devices", name, "eject"]))
     }
 
+    /// `GET /api/devices/{name}/smart`: the drive's SMART reading, cached
+    /// by airlockd for a few minutes unless `refresh` asks for a new one.
+    /// Daemons before SMART support answer 404 (`AirlockError.status`);
+    /// 409 while a format, flash or dump holds the device.
+    public func smart(_ device: String, refresh: Bool = false) async throws -> SmartReport {
+        try await get(url(["api/devices", device, "smart"],
+                          query: refresh ? [URLQueryItem(name: "refresh", value: "1")] : []))
+    }
+
     /// Ask airlockd to mount (and share) a partition it isn't serving.
     public func mountPartition(_ name: String) async throws {
         try await post(url(["api/partitions", name, "mount"]))
