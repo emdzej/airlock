@@ -17,7 +17,8 @@ Mac silently, with no Finder window, and can mount every drive as it
 appears. **Open Airlock…** in the menu opens the full window.
 
 - **Drives and devices:** live drive list, eject one drive or all of
-  them, device details with partitions.
+  them, device details with partitions and drive health (SMART), with
+  a badge on drives that report a problem.
 - **Device tools in the toolbar:** Format, Flash Image, Save Image and
   Eject, the way Disk Utility does it.
 - **Partitions:** mount, rename and check (fsck) with the tool's

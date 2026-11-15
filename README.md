@@ -83,8 +83,8 @@ Once done: open `http://<hostname>.local/` in a browser, or connect via
 `smb://<hostname>.local/` from Finder / Explorer / Files.
 
 See the [**user guide**](docs/guide.md) for day-to-day usage of every
-feature (Mounts / Devices tabs, file browser, format, flash, dump, fsck,
-volume relabel), and the [**install guide**](docs/install.md) for setup,
+feature (Mounts / Devices tabs, file browser, drive health (SMART),
+format, flash, dump, fsck, volume relabel), and the [**install guide**](docs/install.md) for setup,
 GPIO wiring, uninstall, and troubleshooting.
 
 **Building from source (for a fresh image, or to iterate on the daemon):**
@@ -99,6 +99,7 @@ GPIO wiring, uninstall, and troubleshooting.
 - `internal/samba/` — dynamic `smb.conf` include + reload
 - `internal/gpio/` — button + LED via `/dev/gpiochip0`
 - `internal/api/` — HTTP server + embedded status page
+- `internal/smart/` — SMART health via `smartctl --json`, normalised for ATA / NVMe / SCSI
 - `image/pi-gen/` — custom pi-gen stage (`stage-airlock/`)
 - `scripts/install.sh` — installer for an existing Raspberry Pi (installs the config files from `image/pi-gen/stage-airlock` via the release bundle)
 - `.github/workflows/` — CI (build/test/lint), Release (tag → binaries, bundle, image, DMG) and the docs site

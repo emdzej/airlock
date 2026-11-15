@@ -6,6 +6,24 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.
 and this project uses semantic versioning starting at 0.x — pre-1.0 breaking
 changes are allowed between minor versions.
 
+## [Unreleased]
+
+### Added
+
+- **Drive health (SMART)** on the Devices page and in the apps: the
+  verdict (healthy / warning / failing), temperature, power-on hours,
+  power cycles, SSD wear and spare, sector and media error counters,
+  and the raw ATA attribute table or NVMe health log. Device rows get
+  a badge when a drive reports a problem. Read-only, through
+  `smartctl --json`; read once when a drive appears, then at most
+  every five minutes, and never during a format, flash or dump.
+  Sleeping hard drives aren't woken. Thumb drives and SD cards have no
+  SMART and say so.
+- API: `GET /api/devices/{name}/smart` (`?refresh=1` to read again);
+  `GET /api/devices` carries the cached verdict as `health`.
+- `smartmontools` in the image and `install.sh`, with its `smartd`
+  monitor disabled.
+
 ## [0.7.0] — 2026-11-06
 
 Report a Problem in the apps: a note and a screenshot to the support

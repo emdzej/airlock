@@ -92,7 +92,8 @@ and eject again.
 
 Every USB-attached block device shows up here, whether mounted or not.
 Rows show the vendor / model / serial, size, partition-table type, and
-transport (always `USB`).
+transport (always `USB`), and drive health for drives with SMART data
+(see [Drive health](#drive-health-smart)).
 
 ### Device-level actions
 
@@ -117,6 +118,40 @@ per-partition actions appear:
 
 Partitions with unsupported filesystems (UFS, HFS+ RW, LUKS, etc.) show
 up with their metadata but no per-partition actions.
+
+### Drive health (SMART)
+
+Drives that keep SMART data get a **Health** line under the device
+header: the verdict, temperature, power-on hours, power cycles and, for
+SSDs, how much of the rated write endurance is used. **SMART
+attributes** opens the raw table the verdict is based on (ATA
+attributes, or the NVMe health log); **Re-check** reads the drive again.
+
+| Health | Meaning |
+|---|---|
+| **Healthy** | The drive's self-assessment passed and no error counters are set |
+| **Warning** | It passed, but something is worth knowing: reallocated, pending or uncorrectable sectors, media errors, low spare capacity, or 90 % or more of the rated endurance used. Don't keep the only copy of anything on it |
+| **Failing** | The drive says it's failing. Copy off what you need and replace it |
+| **No SMART data** | The device doesn't report SMART (see below) |
+| **Asleep** | A spun-down hard drive; Airlock doesn't wake it just to read SMART. **Re-check** once it's been accessed |
+
+Device rows show a **Health warning** or **Failing** badge, so a bad
+drive stands out without opening it. Healthy drives show no badge.
+
+Which devices have SMART:
+
+- **USB SSDs and hard drives** (SATA behind a USB bridge, NVMe in a USB
+  enclosure): usually yes. `smartctl` picks the bridge type from its
+  drive database by the enclosure's USB id.
+- **Thumb drives, SD and microSD cards, card readers:** no. Flash
+  controllers in these don't implement SMART, and Airlock doesn't send
+  guessed pass-through commands to bridges `smartctl` doesn't know.
+
+Airlock reads SMART once when a drive appears and at most every five
+minutes after that, never while a format, flash or dump is running, and
+reads only: nothing is written to the drive and no self-tests are
+started. The JSON is at `GET /api/devices/<name>/smart` (`?refresh=1`
+forces a new reading).
 
 ## File browser
 
@@ -428,6 +463,24 @@ only shows the listen address, `addr=":80"`, not the IP.)
 - xz decompression can take a while after the upload finishes —
   the progress bar stays at 100 % for the upload phase while the
   server drains its buffer. That's expected.
+
+### Health says "No SMART data" for a USB SSD or hard drive
+
+Some USB enclosures don't pass SMART commands through, or use a bridge
+chip `smartctl` doesn't know. Check from the Pi:
+
+```sh
+sudo smartctl -a /dev/sdX            # what Airlock sees
+sudo smartctl -d sat -a /dev/sdX     # force SAT pass-through
+```
+
+If `-d sat` works, the enclosure is missing from smartmontools' drive
+database; `sudo update-smart-drivedb` may fetch a newer one (on the
+read-only image, follow [Making persistent changes](/install#flash-the-image) first). Airlock
+itself never forces a device type.
+
+If it says `smartctl isn't installed`, the Pi was set up before 0.8.0
+by hand: `sudo apt install smartmontools`.
 
 ### Where to look for logs
 

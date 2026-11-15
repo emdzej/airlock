@@ -73,6 +73,7 @@ export default defineConfig({
             link: '/apps',
             items: [{ text: 'macOS install and details', link: '/companion' }],
           },
+          { text: 'Drive health (SMART)', link: '/guide#drive-health-smart' },
           { text: 'Format · flash · dump · fsck', link: '/guide#formatting-a-drive' },
           { text: 'Physical eject button', link: '/guide#physical-eject-button-led-optional' },
         ],

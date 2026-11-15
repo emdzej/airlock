@@ -4,7 +4,8 @@
 discovers every Airlock on your LAN and lets you mount, unmount, and
 eject drives without leaving your keyboard. **Open Airlock…** (⌘O in
 the menu) opens a window with everything the web UI does: drives,
-devices, format, flash, dump, fsck, relabel, mount and a file browser.
+devices, drive health (SMART), format, flash, dump, fsck, relabel, mount
+and a file browser.
 
 - Menu-bar first (`LSUIElement`): it shows in the Dock only while the
   Airlock window is open. The window opens by itself on first launch,

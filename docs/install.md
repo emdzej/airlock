@@ -163,7 +163,8 @@ sudo apt-get install -y \
     samba samba-common-bin \
     avahi-daemon libnss-mdns \
     exfatprogs ntfs-3g dosfstools e2fsprogs hfsprogs \
-    gdisk parted xz-utils
+    gdisk parted xz-utils smartmontools
+sudo systemctl disable --now smartmontools.service   # airlockd runs smartctl itself
 ```
 
 ### 2. Download, verify and unpack the bundle

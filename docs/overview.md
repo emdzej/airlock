@@ -67,7 +67,7 @@ Airlock is a headless appliance — you use it through:
 - **Any SMB client** — Finder, Explorer, GNOME Files, `smbclient`.
   Guest access, no password. Best for quick file transfers.
 - **The built-in web UI** — open `http://airlock/` in a browser.
-  Adds format, flash, dump, fsck, relabel, and a live per-drive file
+  Adds drive health (SMART), format, flash, dump, fsck, relabel, and a live per-drive file
   browser. Best when you need to *do* something to the media, not
   just copy files off it.
 - **The [macOS menu-bar companion](/companion)** — a small
@@ -101,7 +101,7 @@ Samba and Avahi. Everything else is standard OS.
 - [**Install on a Pi**](/install) — flash the ready-made image, or
   use the one-line installer on an existing Raspberry Pi OS Lite system.
 - [**User guide**](/guide) — day-to-day usage: browse, format, flash,
-  dump, fsck, relabel, GPIO button.
+  dump, fsck, relabel, drive health, GPIO button.
 - [**macOS companion app**](/companion) — install the menu-bar
   client, understand Auto-mount and Auto-unmount reconciliation.
 - [**Changelog**](https://github.com/emdzej/airlock/blob/main/CHANGELOG.md) —
