@@ -12,6 +12,7 @@ import (
 	"github.com/emdzej/airlock/internal/fsck"
 	"github.com/emdzej/airlock/internal/label"
 	"github.com/emdzej/airlock/internal/mount"
+	"github.com/emdzej/airlock/internal/smart"
 )
 
 // GET /api/devices — list every USB-attached block device (whole disks) with
@@ -23,6 +24,7 @@ func (s *Server) handleListDevices(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.smart.prune(list)
 	out := make([]devicePayload, 0, len(list))
 	for _, d := range list {
 		out = append(out, s.devicePayload(d))
@@ -58,6 +60,7 @@ type devicePayload struct {
 	ReadOnly    bool               `json:"read_only"`
 	AnyRO       bool               `json:"any_partition_read_only"`
 	SuggestedFS string             `json:"suggested_fs"`
+	Health      smart.Status       `json:"health,omitempty"` // cached SMART verdict; "" until read
 	Partitions  []partitionPayload `json:"partitions"`
 }
 
@@ -124,6 +127,7 @@ func (s *Server) devicePayload(d devices.Device) devicePayload {
 		ReadOnly:    d.ReadOnly,
 		AnyRO:       anyRO,
 		SuggestedFS: suggested,
+		Health:      s.smart.peek(d),
 		Partitions:  parts,
 	}
 }

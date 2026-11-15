@@ -182,6 +182,15 @@ func (m *Manager) isQuarantinedLocked(disk string) bool {
 	return busy
 }
 
+// RunningOp returns the operation holding disk ("format", "flash", …) and
+// whether one is running.
+func (m *Manager) RunningOp(disk string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	op, ok := m.ops[disk]
+	return op, ok
+}
+
 // IsMounted reports whether airlock currently owns a mount for the given
 // kernel name.
 func (m *Manager) IsMounted(kernel string) bool {

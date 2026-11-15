@@ -42,6 +42,7 @@ type Server struct {
 	onBusy  BusyFunc
 	version string
 	events  *broadcaster
+	smart   *smartCache
 
 	allowedHosts []string       // extra Host names for the rebinding guard
 	ops          sync.WaitGroup // in-flight device operations
@@ -69,6 +70,7 @@ func New(mgr *mount.Manager, onBusy BusyFunc, version string) (*Server, error) {
 		onBusy:  onBusy,
 		version: version,
 		events:  newBroadcaster(),
+		smart:   newSmartCache(mgr.RunningOp),
 		closing: make(chan struct{}),
 	}, nil
 }
@@ -116,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/devices/{parent}/format", s.handleFormat)
 	mux.HandleFunc("POST /api/devices/{parent}/flash", s.handleFlash)
 	mux.HandleFunc("GET /api/devices/{parent}/dump", s.handleDump)
+	mux.HandleFunc("GET /api/devices/{parent}/smart", s.handleSmart)
 	// Partition-level operations
 	mux.HandleFunc("POST /api/partitions/{name}/label", s.handleSetLabel)
 	mux.HandleFunc("POST /api/partitions/{name}/mount", s.handleMountPartition)

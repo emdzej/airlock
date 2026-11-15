@@ -167,8 +167,12 @@ apt-get install -y --no-install-recommends \
     avahi-daemon libnss-mdns \
     exfatprogs ntfs-3g dosfstools e2fsprogs hfsprogs \
     gdisk parted util-linux \
-    xz-utils \
+    xz-utils smartmontools \
     ca-certificates curl
+# smartmontools is there for smartctl, which airlockd runs on demand for
+# the Devices page's SMART health. Its smartd monitor isn't wanted: it
+# would poll (and wake) every attached drive behind airlockd's back.
+systemctl disable --now smartmontools.service >/dev/null 2>&1 || true
 
 # --- get the binary ---
 # Precedence: AIRLOCK_LOCAL_BINARY > AIRLOCK_BINARY_URL > the bundle's

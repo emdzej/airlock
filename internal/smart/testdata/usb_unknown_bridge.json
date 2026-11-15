@@ -1,0 +1,35 @@
+{
+ "json_format_version": [
+  1,
+  0
+ ],
+ "smartctl": {
+  "version": [
+   7,
+   4
+  ],
+  "pre_release": false,
+  "svn_revision": "5530",
+  "platform_info": "aarch64-linux-6.18.34+rpt-rpi-v8",
+  "build_info": "(local build)",
+  "argv": [
+   "smartctl",
+   "--json",
+   "-a",
+   "-n",
+   "standby",
+   "/dev/sda"
+  ],
+  "messages": [
+   {
+    "string": "/dev/sda: Unknown USB bridge [0x05e3:0x0764 (0x2960)]",
+    "severity": "error"
+   }
+  ],
+  "exit_status": 1
+ },
+ "local_time": {
+  "time_t": 0,
+  "asctime": ""
+ }
+}

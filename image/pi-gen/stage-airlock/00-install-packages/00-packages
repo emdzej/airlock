@@ -11,3 +11,4 @@ parted
 udev
 overlayroot
 xz-utils
+smartmontools

@@ -70,6 +70,29 @@
                        font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
         .footer-link:hover { color: #06c; }
         .gh-icon { vertical-align: middle; }
+        .hbadge { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 9px;
+                  font-size: 11px; font-weight: 600; vertical-align: 1px; }
+        .hbadge.warning { background: #fff4e0; color: #9a5b00; }
+        .hbadge.failing { background: #ffebee; color: #a10000; }
+        .health { padding: 10px 16px; border-bottom: 1px solid #f0f0f0; font-size: 12px; color: #555; }
+        .health-line { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+        .health-verdict { font-weight: 600; }
+        .health-verdict.passed { color: #1a7f37; }
+        .health-verdict.warning { color: #9a5b00; }
+        .health-verdict.failing { color: #a10000; }
+        .health-verdict.quiet { color: #888; font-weight: normal; }
+        .health-line .stat b { color: #333; font-weight: 600; }
+        .health-line button { margin-left: auto; padding: 2px 8px; font-size: 11px; }
+        .health ul { margin: 6px 0 0 18px; padding: 0; color: #9a5b00; }
+        .health.failing ul { color: #a10000; }
+        .health details { margin-top: 6px; }
+        .health summary { cursor: pointer; color: #06c; }
+        .attrs { border-collapse: collapse; margin-top: 6px; width: 100%;
+                 font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .attrs th { text-align: left; color: #888; font-weight: normal; padding: 2px 8px 2px 0; }
+        .attrs td { padding: 2px 8px 2px 0; border-top: 1px solid #f5f5f5; }
+        .attrs td.num { text-align: right; }
+        .attrs tr.failed td { color: #a10000; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -276,6 +299,12 @@
             const kernel = document.createElement("span");
             kernel.className = "dev-kernel"; kernel.textContent = "/dev/" + d.name;
             title.appendChild(kernel);
+            if (d.health === "warning" || d.health === "failing") {
+                const hb = document.createElement("span");
+                hb.className = "hbadge " + d.health;
+                hb.textContent = d.health === "failing" ? "Failing" : "Health warning";
+                title.appendChild(hb);
+            }
             info.appendChild(title);
             const meta = document.createElement("div");
             meta.className = "dev-meta";
@@ -315,6 +344,8 @@
             actions.appendChild(dump);
             head.appendChild(actions);
             el.appendChild(head);
+            // Old daemons and empty slots carry no health; skip the strip.
+            if (d.health && d.size_bytes > 0) el.appendChild(renderHealth(d));
 
             if (d.partitions.length === 0) {
                 const np = document.createElement("div");
@@ -328,6 +359,152 @@
                 el.appendChild(ul);
             }
             return el;
+        }
+
+        // SMART readings by device identity, so the 3 s re-render doesn't
+        // refetch (the daemon caches too) or collapse an open table.
+        const smartReports = new Map();
+        const smartPending = new Set();
+        const smartOpen = new Set();
+        const smartKey = (d) => [d.name, d.serial, d.model, d.size_bytes].join("|");
+        // Reports are refetched when the daemon's cached verdict moves on.
+        const reportKey = (d) => smartKey(d) + "|" + d.health;
+
+        async function fetchSmart(d, refresh) {
+            const key = reportKey(d);
+            if (smartPending.has(key)) return;
+            smartPending.add(key);
+            try {
+                const r = await fetch(`/api/devices/${encodeURIComponent(d.name)}/smart` + (refresh ? "?refresh=1" : ""));
+                const body = await r.json().catch(() => ({}));
+                smartReports.set(key, r.ok ? body : {status: "error", summary: body.error || ("HTTP " + r.status)});
+            } catch (e) {
+                smartReports.set(key, {status: "error", summary: e.message});
+            } finally {
+                smartPending.delete(key);
+            }
+            load(true);
+        }
+
+        const VERDICT = {
+            passed: "Healthy", warning: "Warning", failing: "Failing",
+            unsupported: "No SMART data", standby: "Asleep", error: "Couldn't read SMART",
+        };
+
+        function renderHealth(d) {
+            const key = reportKey(d);
+            const rep = smartReports.get(key);
+            const box = document.createElement("div");
+            box.className = "health";
+            const line = document.createElement("div");
+            line.className = "health-line";
+            box.appendChild(line);
+            const verdict = document.createElement("span");
+            line.appendChild(verdict);
+            if (!rep) {
+                verdict.className = "health-verdict quiet";
+                verdict.textContent = "Reading SMART…";
+                fetchSmart(d, false);
+                return box;
+            }
+            const st = rep.status;
+            box.classList.add(st);
+            const quiet = !["passed", "warning", "failing"].includes(st);
+            verdict.className = "health-verdict " + (quiet ? "quiet" : st);
+            verdict.textContent = "Health: " + (VERDICT[st] || st);
+            if (quiet) verdict.title = rep.summary || "";
+            const stat = (label, value) => {
+                const sp = document.createElement("span");
+                sp.className = "stat";
+                sp.append(label + " ");
+                const b = document.createElement("b");
+                b.textContent = value;
+                sp.appendChild(b);
+                line.appendChild(sp);
+            };
+            if (rep.temperature_c != null) stat("Temp", rep.temperature_c + " °C");
+            if (rep.power_on_hours != null) {
+                const h = rep.power_on_hours;
+                stat("Powered on", h.toLocaleString() + " h" + (h >= 8760 ? ` (${(h / 8760).toFixed(1)} y)` : ""));
+            }
+            if (rep.power_cycles != null) stat("Cycles", rep.power_cycles.toLocaleString());
+            if (rep.percentage_used != null) stat("Wear", rep.percentage_used + "% used");
+            if (rep.available_spare != null) stat("Spare", rep.available_spare + "%");
+            if (rep.data_written_bytes != null) stat("Written", humanBytes(rep.data_written_bytes));
+            if (quiet) {
+                const why = document.createElement("span");
+                why.style.color = "#999";
+                why.textContent = rep.summary || "";
+                line.appendChild(why);
+            }
+            if (st !== "unsupported") {
+                const btn = document.createElement("button");
+                btn.textContent = smartPending.has(key) ? "Checking…" : "Re-check";
+                btn.disabled = smartPending.has(key);
+                btn.title = "Read SMART from the drive again";
+                btn.onclick = () => { btn.disabled = true; btn.textContent = "Checking…"; fetchSmart(d, true); };
+                line.appendChild(btn);
+            }
+            if (st === "failing" || st === "warning") {
+                const p = document.createElement("div");
+                p.style.marginTop = "4px";
+                p.textContent = rep.summary;
+                box.appendChild(p);
+                if (rep.warnings && rep.warnings.length) {
+                    const ul = document.createElement("ul");
+                    for (const w of rep.warnings) {
+                        const li = document.createElement("li");
+                        li.textContent = w;
+                        ul.appendChild(li);
+                    }
+                    box.appendChild(ul);
+                }
+            }
+            if (rep.attributes && rep.attributes.length) box.appendChild(renderAttributes(rep, smartKey(d)));
+            return box;
+        }
+
+        function renderAttributes(rep, key) {
+            const det = document.createElement("details");
+            det.open = smartOpen.has(key);
+            det.ontoggle = () => det.open ? smartOpen.add(key) : smartOpen.delete(key);
+            const sum = document.createElement("summary");
+            const ident = [rep.protocol, rep.model, rep.firmware && "fw " + rep.firmware].filter(Boolean).join(" · ");
+            sum.textContent = "SMART attributes" + (ident ? " — " + ident : "");
+            det.appendChild(sum);
+            const ata = rep.attributes.some(a => a.value != null);
+            const table = document.createElement("table");
+            table.className = "attrs";
+            const cols = ata ? ["ID", "Attribute", "Value", "Worst", "Thresh", "Raw"] : ["Field", "Value"];
+            const head = table.insertRow();
+            for (const c of cols) {
+                const th = document.createElement("th");
+                th.textContent = c;
+                head.appendChild(th);
+            }
+            for (const a of rep.attributes) {
+                const tr = table.insertRow();
+                if (a.failed) {
+                    tr.className = "failed";
+                    tr.title = a.failed === "now" ? "Below threshold now" : "Was below threshold in the past";
+                }
+                const cells = ata
+                    ? [[a.id, true], [a.name + (a.prefailure ? " *" : "")], [a.value, true], [a.worst, true], [a.thresh, true], [a.raw]]
+                    : [[a.name], [a.raw]];
+                for (const [v, num] of cells) {
+                    const td = tr.insertCell();
+                    td.textContent = v ?? "";
+                    if (num) td.className = "num";
+                }
+            }
+            det.appendChild(table);
+            if (ata) {
+                const note = document.createElement("div");
+                note.style.cssText = "color:#999;margin-top:4px;";
+                note.textContent = "* pre-failure attribute: falling to its threshold predicts failure. Value and Worst are normalised; higher is better.";
+                det.appendChild(note);
+            }
+            return det;
         }
 
         function renderPartition(p) {

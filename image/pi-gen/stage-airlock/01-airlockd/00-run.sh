@@ -9,7 +9,10 @@ install -D -m 0755 files/usr/local/bin/airlockd \
 install -D -m 0644 files/etc/systemd/system/airlockd.service \
     "${ROOTFS_DIR}/etc/systemd/system/airlockd.service"
 
-# Enable the service on boot.
+# Enable the service on boot. smartmontools is installed for smartctl
+# (SMART health on the Devices page); its smartd monitor stays off so it
+# doesn't poll, and wake, every drive plugged in.
 on_chroot << EOF
 systemctl enable airlockd.service
+systemctl disable smartmontools.service >/dev/null 2>&1 || true
 EOF
