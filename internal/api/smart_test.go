@@ -13,7 +13,7 @@ import (
 func testSmartCache(busyOp string) (*smartCache, *atomic.Int32) {
 	var calls atomic.Int32
 	c := newSmartCache(func(string) (string, bool) { return busyOp, busyOp != "" })
-	c.query = func(context.Context, string) smart.Report {
+	c.query = func(context.Context, string, bool) smart.Report {
 		calls.Add(1)
 		return smart.Report{Status: smart.StatusPassed, CheckedAt: time.Now()}
 	}
@@ -78,5 +78,42 @@ func TestSmartCacheStale(t *testing.T) {
 	c.prune(nil)
 	if len(c.entries) != 0 {
 		t.Fatal("prune kept a removed disk")
+	}
+}
+
+// An idle drive in standby: background probes leave it asleep and keep
+// the last real reading; asking for the reading wakes it.
+func TestSmartCacheStandby(t *testing.T) {
+	var woken, quiet atomic.Int32
+	c := newSmartCache(func(string) (string, bool) { return "", false })
+	c.query = func(_ context.Context, _ string, wake bool) smart.Report {
+		if wake {
+			woken.Add(1)
+			return smart.Report{Status: smart.StatusPassed, CheckedAt: time.Now()}
+		}
+		quiet.Add(1)
+		return smart.Report{Status: smart.StatusStandby, CheckedAt: time.Now()}
+	}
+	d := devices.Device{Name: "sdc", Serial: "A", SizeBytes: 1}
+	waitStatus(t, c, d, smart.StatusStandby)
+	if r, _, _ := c.get(context.Background(), d, false); r.Status != smart.StatusPassed || woken.Load() != 1 {
+		t.Fatalf("get: %q, woken %d", r.Status, woken.Load())
+	}
+	// Five minutes on, the background probe finds it asleep again.
+	c.mu.Lock()
+	e := c.entries["sdc"]
+	e.attempted = time.Now().Add(-2 * smartTTL)
+	e.report.CheckedAt = e.attempted
+	c.mu.Unlock()
+	c.peek(d)
+	for i := 0; i < 100 && quiet.Load() < 2; i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if st := c.peek(d); st != smart.StatusPassed {
+		t.Fatalf("standby replaced the reading: %q", st)
+	}
+	if r, _, _ := c.get(context.Background(), d, false); r.Status != smart.StatusPassed || woken.Load() != 2 {
+		t.Fatalf("stale get didn't wake: %q, woken %d", r.Status, woken.Load())
 	}
 }

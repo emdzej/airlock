@@ -79,15 +79,21 @@ type Report struct {
 const queryTimeout = 30 * time.Second
 
 // Query reads SMART from the block device at path (e.g. "/dev/sdb").
-// Failures come back as a Report with StatusError, never as a Go error, so
-// callers can cache and show them like any other outcome.
-func Query(ctx context.Context, path string) Report {
+// With wake false a drive in standby is left asleep and reported as
+// StatusStandby; with wake true it is spun up and read. Failures come
+// back as a Report with StatusError, never as a Go error, so callers can
+// cache and show them like any other outcome.
+func Query(ctx context.Context, path string, wake bool) Report {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 	// -a: everything (identity, health, attributes, logs) — read-only.
-	// -n standby: don't spin up a sleeping drive just to read it.
+	// -n standby: don't spin up a sleeping drive; -n never: do.
 	// No -d: smartctl's auto-detection uses its USB bridge database.
-	out, err := exec.CommandContext(ctx, "smartctl", "--json", "-a", "-n", "standby", path).Output()
+	power := "standby"
+	if wake {
+		power = "never"
+	}
+	out, err := exec.CommandContext(ctx, "smartctl", "--json", "-a", "-n", power, path).Output()
 	if errors.Is(err, exec.ErrNotFound) {
 		return errorReport("smartctl isn't installed on this airlock (apt install smartmontools).")
 	}
@@ -224,7 +230,7 @@ func Parse(data []byte) (Report, error) {
 
 	if exit&exitOpenFailed != 0 && mentions(r.Messages, "standby", "sleep") {
 		r.Status = StatusStandby
-		r.Summary = "The drive is asleep; Airlock doesn't wake it just to read SMART."
+		r.Summary = "The drive is asleep. Open its health to wake it and read SMART."
 		return r, nil
 	}
 	if j.SmartStatus == nil {

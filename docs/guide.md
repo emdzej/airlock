@@ -133,7 +133,7 @@ attributes, or the NVMe health log); **Re-check** reads the drive again.
 | **Warning** | It passed, but something is worth knowing: reallocated, pending or uncorrectable sectors, media errors, low spare capacity, or 90 % or more of the rated endurance used. Don't keep the only copy of anything on it |
 | **Failing** | The drive says it's failing. Copy off what you need and replace it |
 | **No SMART data** | The device doesn't report SMART (see below) |
-| **Asleep** | A spun-down hard drive; Airlock doesn't wake it just to read SMART. **Re-check** once it's been accessed |
+| **Asleep** | Only in device lists, for an idle drive in standby that has no reading yet. Opening its health wakes it and reads SMART |
 
 Device rows show a **Health warning** or **Failing** badge, so a bad
 drive stands out without opening it. Healthy drives show no badge.
@@ -150,7 +150,10 @@ Which devices have SMART:
 Airlock reads SMART once when a drive appears and at most every five
 minutes after that, never while a format, flash or dump is running, and
 reads only: nothing is written to the drive and no self-tests are
-started. The JSON is at `GET /api/devices/<name>/smart` (`?refresh=1`
+started. Those background checks leave a drive in standby asleep and
+keep its last reading; opening a drive's health (the Devices page, or
+the device in the apps) wakes it to read SMART, which can take a few
+seconds for a hard drive spinning up. The JSON is at `GET /api/devices/<name>/smart` (`?refresh=1`
 forces a new reading).
 
 ## File browser

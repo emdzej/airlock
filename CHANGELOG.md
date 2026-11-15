@@ -17,7 +17,8 @@ changes are allowed between minor versions.
   a badge when a drive reports a problem. Read-only, through
   `smartctl --json`; read once when a drive appears, then at most
   every five minutes, and never during a format, flash or dump.
-  Sleeping hard drives aren't woken. Thumb drives and SD cards have no
+  Background checks don't wake a drive in standby; opening its health
+  does. Thumb drives and SD cards have no
   SMART and say so.
 - API: `GET /api/devices/{name}/smart` (`?refresh=1` to read again);
   `GET /api/devices` carries the cached verdict as `health`.
