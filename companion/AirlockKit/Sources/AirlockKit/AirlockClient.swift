@@ -63,6 +63,12 @@ public struct AirlockClient: Sendable {
                           query: refresh ? [URLQueryItem(name: "refresh", value: "1")] : []))
     }
 
+    /// `GET /api/devices/{name}/disc`: what's in an optical drive and
+    /// whether an image can be burned onto it. Spins the drive up.
+    public func disc(_ device: String) async throws -> DiscInfo {
+        try await get(url(["api/devices", device, "disc"]))
+    }
+
     /// Ask airlockd to mount (and share) a partition it isn't serving.
     public func mountPartition(_ name: String) async throws {
         try await post(url(["api/partitions", name, "mount"]))
@@ -139,6 +145,23 @@ public struct AirlockClient: Sendable {
     public func flash(_ device: String, image: URL, compression: Compression) -> AsyncThrowingStream<OpUpdate, Error> {
         var req = URLRequest(url: url(["api/devices", device, "flash"],
                                       query: [URLQueryItem(name: "compression", value: compression.rawValue)]))
+        req.httpMethod = "POST"
+        req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        return OperationStream.run(req, uploadFrom: image)
+    }
+
+    /// Burn a disc image onto the disc in an optical drive. airlockd
+    /// receives (and decompresses) the whole image before touching the
+    /// disc, so a cancelled upload leaves it untouched.
+    public func burn(_ device: String, image: URL, compression: Compression,
+                     verify: Bool, eject: Bool, speed: Int = 0) -> AsyncThrowingStream<OpUpdate, Error> {
+        // speed is a DiscSpeed.kbps; 0 burns at the drive's maximum.
+        var req = URLRequest(url: url(["api/devices", device, "burn"], query: [
+            URLQueryItem(name: "compression", value: compression.rawValue),
+            URLQueryItem(name: "verify", value: verify ? "1" : "0"),
+            URLQueryItem(name: "eject", value: eject ? "1" : "0"),
+            URLQueryItem(name: "speed", value: String(speed)),
+        ]))
         req.httpMethod = "POST"
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         return OperationStream.run(req, uploadFrom: image)

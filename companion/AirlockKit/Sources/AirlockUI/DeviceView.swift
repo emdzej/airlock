@@ -60,13 +60,14 @@ struct DeviceRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            IconTile(systemName: device.isEmpty ? "sdcard" : "externaldrive.connected.to.line.below.fill",
-                     tint: device.isEmpty ? .secondary : .brand, size: 44)
+            IconTile(systemName: icon, tint: device.isEmpty ? .secondary : .brand, size: 44)
             VStack(alignment: .leading, spacing: 5) {
                 Text(device.title).font(.headline).lineLimit(1)
                 HStack(spacing: 6) {
                     Text("/dev/\(device.name)").font(.subheadline.monospaced()).foregroundStyle(.secondary)
-                    if device.isEmpty {
+                    if device.optical {
+                        Badge(text: device.isEmpty ? "No disc" : device.sizeHuman)
+                    } else if device.isEmpty {
                         Badge(text: "No media")
                     } else {
                         Badge(text: device.sizeHuman)
@@ -86,6 +87,11 @@ struct DeviceRow: View {
         }
         .padding(.vertical, 4)
     }
+
+    private var icon: String {
+        if device.optical { return "opticaldiscdrive" }
+        return device.isEmpty ? "sdcard" : "externaldrive.connected.to.line.below.fill"
+    }
 }
 
 /// One device: identity, partitions and the whole-disk operations.
@@ -101,11 +107,12 @@ struct DeviceView: View {
     @State private var working: String?
 
     enum SheetKind: Identifiable {
-        case format, flash, dump, fsck(Partition)
+        case format, flash, burn, dump, fsck(Partition)
         var id: String {
             switch self {
             case .format: "format"
             case .flash: "flash"
+            case .burn: "burn"
             case .dump: "dump"
             case let .fsck(p): "fsck-\(p.name)"
             }
@@ -131,6 +138,7 @@ struct DeviceView: View {
                 switch kind {
                 case .format: FormatSheet(client: host.client, device: device) { Task { await model.refresh() } }
                 case .flash: FlashSheet(client: host.client, device: device) { Task { await model.refresh() } }
+                case .burn: BurnSheet(client: host.client, device: device) { Task { await model.refresh() } }
                 case .dump: DumpSheet(client: host.client, device: device)
                 case let .fsck(p): FsckSheet(client: host.client, partition: p) { Task { await model.refresh() } }
                 }
@@ -160,7 +168,11 @@ struct DeviceView: View {
         List {
             Section {
                 LabeledContent("Device", value: device.path)
-                LabeledContent("Size", value: device.isEmpty ? "No media" : device.sizeHuman)
+                if device.optical {
+                    LabeledContent("Disc", value: device.isEmpty ? "None, or blank" : device.sizeHuman)
+                } else {
+                    LabeledContent("Size", value: device.isEmpty ? "No media" : device.sizeHuman)
+                }
                 if !device.ptType.isEmpty {
                     LabeledContent("Partition table", value: device.ptType == "dos" ? "MBR" : device.ptType.uppercased())
                 }
@@ -170,7 +182,10 @@ struct DeviceView: View {
                 }
             }
 
-            HealthSection(client: host.client, device: device)
+            // Optical drives don't report SMART.
+            if !device.optical {
+                HealthSection(client: host.client, device: device)
+            }
 
             if !device.livePartitions.isEmpty {
                 Section {
@@ -178,10 +193,12 @@ struct DeviceView: View {
                         partitionRow(p, device: device)
                     }
                 } header: {
-                    Text("Partitions")
+                    Text(device.optical ? "Disc" : "Partitions")
                 } footer: {
                     #if os(macOS)
-                    Text("Format and Flash in the toolbar erase everything on the device.")
+                    if !device.optical {
+                        Text("Format and Flash in the toolbar erase everything on the device.")
+                    }
                     #endif
                 }
             }
@@ -189,12 +206,21 @@ struct DeviceView: View {
             #if os(iOS)
             // iOS: actions as tinted rows in the list (HIG lists). The Mac
             // puts them in the window toolbar instead, like Disk Utility.
-            Section {
-                formatButton(device)
-                flashButton(device)
-                dumpButton(device)
-            } footer: {
-                Text("Format and Flash erase everything on the device.")
+            if device.optical {
+                Section {
+                    burnButton(device)
+                    dumpButton(device)
+                } footer: {
+                    Text("Burn writes a disc image onto a blank or rewritable disc.")
+                }
+            } else {
+                Section {
+                    formatButton(device)
+                    flashButton(device)
+                    dumpButton(device)
+                } footer: {
+                    Text("Format and Flash erase everything on the device.")
+                }
             }
 
             Section {
@@ -205,10 +231,16 @@ struct DeviceView: View {
         #if os(macOS)
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
-                formatButton(device).help("Erase the device and create a new filesystem")
-                flashButton(device).help("Write a disk image to the whole device")
-                dumpButton(device).help("Save an image of the whole device")
-                ejectButton(device).help("Unmount every partition and power the device down")
+                if device.optical {
+                    burnButton(device).help("Burn a disc image onto a blank or rewritable disc")
+                    dumpButton(device).help("Save an image of the disc")
+                    ejectButton(device).help("Unmount the disc and open the tray")
+                } else {
+                    formatButton(device).help("Erase the device and create a new filesystem")
+                    flashButton(device).help("Write a disk image to the whole device")
+                    dumpButton(device).help("Save an image of the whole device")
+                    ejectButton(device).help("Unmount every partition and power the device down")
+                }
             }
         }
         .labelStyle(.titleAndIcon)
@@ -233,6 +265,11 @@ struct DeviceView: View {
             .disabled(!device.isWritable || working != nil)
     }
 
+    private func burnButton(_ device: Device) -> some View {
+        Button("Burn Image…", systemImage: "opticaldisc") { sheet = .burn }
+            .disabled(working != nil)
+    }
+
     private func dumpButton(_ device: Device) -> some View {
         Button(dumpTitle, systemImage: "square.and.arrow.down") { sheet = .dump }
             .disabled(device.isEmpty || working != nil)
@@ -247,13 +284,14 @@ struct DeviceView: View {
     }
 
     private func ejectButton(_ device: Device) -> some View {
-        Button("Eject Device", systemImage: "eject", role: .destructive) { eject(device) }
+        Button(device.optical ? "Eject Disc" : "Eject Device", systemImage: "eject", role: .destructive) { eject(device) }
             .disabled(working != nil || !host.isReachable)
     }
 
     private func partitionRow(_ p: Partition, device: Device) -> some View {
         HStack(spacing: 14) {
-            IconTile(systemName: p.fsType.isEmpty ? "square.dashed" : "internaldrive",
+            IconTile(systemName: p.fsType.isEmpty ? "square.dashed"
+                        : device.optical ? "opticaldisc" : "internaldrive",
                      tint: p.shareName != nil ? .brand : .secondary, size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(p.label.isEmpty ? p.name : p.label).font(.body.weight(.medium))

@@ -66,6 +66,9 @@ public struct Device: Codable, Equatable, Hashable, Sendable, Identifiable {
     public let readOnly: Bool
     public let anyPartitionReadOnly: Bool
     public let suggestedFS: String
+    /// A CD/DVD/BD drive: burn and dump instead of format and flash.
+    /// `sizeBytes` is the disc's; daemons before burn support omit it.
+    public let optical: Bool
     /// airlockd's cached SMART verdict; nil until it has read the drive,
     /// for media without a medium, and from daemons before SMART support.
     public let health: SmartReport.Status?
@@ -88,8 +91,9 @@ public struct Device: Codable, Equatable, Hashable, Sendable, Identifiable {
     /// kernel still lists the pulled card's.
     public var livePartitions: [Partition] { isEmpty ? [] : partitions }
 
-    /// Whole-disk writes (format, flash) are refused for read-only media.
-    public var isWritable: Bool { !readOnly && !anyPartitionReadOnly && !isEmpty }
+    /// Whole-disk writes (format, flash) are refused for read-only media
+    /// and optical drives.
+    public var isWritable: Bool { !optical && !readOnly && !anyPartitionReadOnly && !isEmpty }
 
     /// What the web UI asks the user to type before a destructive
     /// operation: the first partition label, else a fixed word.
@@ -98,7 +102,7 @@ public struct Device: Codable, Equatable, Hashable, Sendable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case name, path, model, vendor, serial, transport, partitions, health
+        case name, path, model, vendor, serial, transport, partitions, health, optical
         case sizeBytes = "size_bytes"
         case sizeHuman = "size_human"
         case ptType = "pt_type"
@@ -121,6 +125,7 @@ public struct Device: Codable, Equatable, Hashable, Sendable, Identifiable {
         readOnly = try c.decode(Bool.self, forKey: .readOnly)
         anyPartitionReadOnly = try c.decodeIfPresent(Bool.self, forKey: .anyPartitionReadOnly) ?? false
         suggestedFS = try c.decodeIfPresent(String.self, forKey: .suggestedFS) ?? "vfat"
+        optical = try c.decodeIfPresent(Bool.self, forKey: .optical) ?? false
         health = try c.decodeIfPresent(SmartReport.Status.self, forKey: .health)
         // Go encodes an empty slice as null when it was never allocated.
         partitions = try c.decodeIfPresent([Partition].self, forKey: .partitions) ?? []
@@ -237,20 +242,87 @@ public enum Compression: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// One progress event from a streamed operation (format, flash, fsck).
-/// The terminal event has `stage` "done" or "error".
+/// One progress event from a streamed operation (format, flash, burn,
+/// fsck). The terminal event has `stage` "done" or "error".
 public struct OpEvent: Codable, Equatable, Sendable {
     public let stage: String
     public let message: String?
-    /// Bytes written to the device so far (flash).
+    /// Bytes written to the device so far (flash), or burned / verified
+    /// so far in the current stage (burn).
     public let written: Int64?
+    /// What `written` counts towards in the current stage (burn).
+    public let total: Int64?
     /// Tool exit status (fsck).
     public let exitCode: Int?
 
     public var isTerminal: Bool { stage == "done" || stage == "error" }
 
     enum CodingKeys: String, CodingKey {
-        case stage, message, written
+        case stage, message, written, total
         case exitCode = "exit_code"
+    }
+}
+
+/// The disc in an optical drive (`GET /api/devices/{name}/disc`).
+public struct DiscInfo: Codable, Equatable, Sendable {
+    public let present: Bool
+    /// "DVD+RW", "CD-R", "BD-R sequential recording", …
+    public let media: String?
+    /// "blank", "appendable", "closed" or "unknown".
+    public let status: String?
+    public let rewritable: Bool
+    /// Room for an image: a blank disc's free space, or all of a
+    /// rewritable one.
+    public let capacityBytes: Int64
+    public let writable: Bool
+    /// Why an image can't be burned, when `writable` is false.
+    public let reason: String?
+    /// Burning erases what's on the (rewritable) disc now.
+    public let erases: Bool
+    /// Free space on the airlock for caching the image before the burn.
+    public let cacheFreeBytes: Int64
+    /// Write speeds the drive offers for this disc, slowest first. Empty
+    /// when it reports none: the burn runs at the drive's maximum.
+    public let speeds: [DiscSpeed]
+
+    /// "Blank DVD+R", "DVD+RW".
+    public var title: String {
+        let m = media ?? "Disc"
+        return status == "blank" ? "Blank \(m)" : m
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case present, media, status, rewritable, writable, reason, erases
+        case capacityBytes = "capacity_bytes"
+        case cacheFreeBytes = "cache_free_bytes"
+        case speeds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        present = try c.decode(Bool.self, forKey: .present)
+        media = try c.decodeIfPresent(String.self, forKey: .media)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        rewritable = try c.decode(Bool.self, forKey: .rewritable)
+        capacityBytes = try c.decode(Int64.self, forKey: .capacityBytes)
+        writable = try c.decode(Bool.self, forKey: .writable)
+        reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        erases = try c.decode(Bool.self, forKey: .erases)
+        cacheFreeBytes = try c.decode(Int64.self, forKey: .cacheFreeBytes)
+        // Absent from older airlocks, and when the drive lists none.
+        speeds = try c.decodeIfPresent([DiscSpeed].self, forKey: .speeds) ?? []
+    }
+}
+
+/// One write speed an optical drive offers.
+public struct DiscSpeed: Codable, Equatable, Hashable, Sendable {
+    /// Throughput in kB/s (1000 bytes); what `burn(speed:)` takes.
+    public let kbps: Int
+    /// "8x", "16x".
+    public let label: String
+
+    /// "8x (11.1 MB/s)".
+    public var title: String {
+        "\(label) (\(String(format: "%.1f", Double(kbps) / 1000)) MB/s)"
     }
 }

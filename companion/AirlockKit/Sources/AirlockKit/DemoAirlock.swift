@@ -86,7 +86,7 @@ public final class DemoAirlock: @unchecked Sendable {
                 "name": d.name, "path": "/dev/\(d.name)", "model": d.model, "vendor": d.vendor,
                 "serial": d.serial, "size_bytes": d.size, "size_human": human(d.size),
                 "transport": "usb", "pt_type": d.ptType, "read_only": d.readOnly,
-                "any_partition_read_only": d.readOnly, "suggested_fs": d.suggestedFS,
+                "any_partition_read_only": d.readOnly, "suggested_fs": d.suggestedFS, "optical": d.optical,
                 "health": d.size > 0 ? d.smart["status"] ?? NSNull() : NSNull(),
                 "partitions": d.partitions.map { p in
                     [
@@ -95,7 +95,7 @@ public final class DemoAirlock: @unchecked Sendable {
                         "mount_point": p.shared ? "/mnt/airlock/\(p.shareName)" : "",
                         "is_airlock": p.shared, "share_name": p.shared ? p.shareName as Any : NSNull(),
                         "can_relabel": !d.readOnly, "max_label_len": p.fs == "ntfs" ? 32 : 11,
-                        "can_mount": !p.shared, "can_fsck": true,
+                        "can_mount": !p.shared, "can_fsck": !d.optical,
                     ] as [String: Any]
                 },
             ] as [String: Any]
@@ -144,6 +144,7 @@ public final class DemoAirlock: @unchecked Sendable {
             devices[di].size = 0
             devices[di].partitions = []
             devices[di].ptType = ""
+            if d.optical { devices[di].trayOpen = true }
             changed()
             p.respondJSON(["ok": true])
         case ("GET", "dump"):
@@ -158,7 +159,16 @@ public final class DemoAirlock: @unchecked Sendable {
             var report = d.smart
             report["checked_at"] = ISO8601DateFormatter().string(from: Date())
             p.respondJSON(report)
+        case ("GET", "disc"):
+            guard d.optical else { return p.fail(400, "\(name) is not an optical drive") }
+            p.respondJSON(discJSON(d))
+            // Checking again finds a fresh blank disc in the tray.
+            if d.trayOpen { devices[di].trayOpen = false }
+        case ("POST", "burn"):
+            guard d.optical else { return p.fail(400, "\(name) is not an optical drive") }
+            burn(p, di: di, bytes: Int64(body.count), query: query)
         case ("POST", "format"), ("POST", "flash"):
+            guard !d.optical else { return p.fail(400, "optical drives can't be formatted or flashed; burn an image instead") }
             guard d.size > 0 else { return p.fail(404, "no medium") }
             guard !d.readOnly else { return p.fail(403, "the device is write-protected") }
             if action == "flash" { return flash(p, di: di, bytes: Int64(body.count)) }
@@ -323,6 +333,68 @@ public final class DemoAirlock: @unchecked Sendable {
         }
     }
 
+    /// A blank DVD+R in the tray until a burn fills it; nothing once ejected.
+    private func discJSON(_ d: DemoDevice) -> [String: Any] {
+        let capacity: Int64 = 2_295_104 * 2048
+        let free: Int64 = 96_000_000_000
+        if d.trayOpen {
+            return ["present": false, "rewritable": false, "capacity_bytes": 0, "writable": false,
+                    "reason": "no disc in the drive", "erases": false, "cache_free_bytes": free]
+        }
+        if d.size > 0 {
+            return ["present": true, "media": "DVD+R", "status": "closed", "rewritable": false,
+                    "capacity_bytes": 0, "writable": false,
+                    "reason": "the disc has already been written; insert a blank or rewritable disc",
+                    "erases": false, "cache_free_bytes": free]
+        }
+        let speeds: [[String: Any]] = [(5540, "4x"), (11080, "8x"), (22160, "16x")]
+            .map { ["kbps": $0.0, "label": $0.1] }
+        return ["present": true, "media": "DVD+R", "status": "blank", "rewritable": false,
+                "capacity_bytes": capacity, "writable": true, "erases": false, "cache_free_bytes": free,
+                "speeds": speeds]
+    }
+
+    private func burn(_ p: DemoURLProtocol, di: Int, bytes: Int64, query: [String: String]) {
+        let d = devices[di]
+        let disc = discJSON(d)
+        guard disc["writable"] as? Bool == true else { return p.fail(400, disc["reason"] as? String ?? "can't burn") }
+        let name = d.name
+        let total = max(bytes, 1)
+        let verify = query["verify"] != "0"
+        let kbps = Int(query["speed"] ?? "") ?? 0
+        let speedNote = kbps > 0 ? " at \(kbps / 1385)x" : ""
+        p.startStream()
+        var steps: [(TimeInterval, [String: Any])] = [
+            (0.3, ["stage": "check", "message": "checking the disc in /dev/\(name)"]),
+            (0.3, ["stage": "cache", "message": "receiving the image"]),
+            (0.5, ["stage": "cache", "message": "received \(human(bytes))"]),
+            (0.3, ["stage": "unmount", "message": "unmounting the disc in /dev/\(name)"]),
+            (0.3, ["stage": "burn", "message": "burning \(human(bytes)) onto the DVD+R" + speedNote]),
+            (0.2, ["stage": "line", "message": "Beginning to write data track."]),
+        ]
+        for i in 1...10 { steps.append((0.3, ["stage": "burn", "written": total * Int64(i) / 10, "total": total])) }
+        steps.append((0.2, ["stage": "line", "message": "Writing to '/dev/\(name)' completed successfully."]))
+        if verify {
+            steps.append((0.3, ["stage": "verify", "message": "reading the disc back"]))
+            for i in 1...5 { steps.append((0.2, ["stage": "verify", "written": total * Int64(i) / 5, "total": total])) }
+        }
+        let eject = query["eject"] == "1"
+        if eject { steps.append((0.3, ["stage": "eject", "message": "opening the tray"])) }
+        run(p, steps) { [self] in
+            if eject {
+                devices[di].trayOpen = true
+            } else {
+                devices[di].size = total
+                let part = DemoPartition(name: name, size: total, fs: "iso9660", label: "DEMO_DISC",
+                                         uuid: "2026-11-21-12-00-00-00")
+                devices[di].partitions = [part]
+                files[part.name] = DemoNode.seed(for: part.label)
+            }
+            changed()
+            return ["stage": "done", "message": "burn complete — wrote \(human(bytes))" + (verify ? ", verified" : "")]
+        }
+    }
+
     /// Sends events with delays, then the final one (which may change
     /// state), unless the request was cancelled.
     private func run(_ p: DemoURLProtocol, _ steps: [(TimeInterval, [String: Any])],
@@ -379,6 +451,9 @@ struct DemoDevice {
     var partitions: [DemoPartition]
     /// The `smart.Report` JSON `GET /api/devices/{name}/smart` serves.
     var smart: [String: Any] = DemoDevice.noSmart
+    /// A DVD writer; `size` is the disc's (0: blank or no disc).
+    var optical = false
+    var trayOpen = false
 
     /// What airlockd says for SD cards, thumb drives and card readers.
     static let noSmart: [String: Any] = [
@@ -424,6 +499,9 @@ struct DemoDevice {
                                                   label: "FIRMWARE", uuid: "1B2C-3D4E")]),
             DemoDevice(name: "sdd", vendor: "Generic", model: "SD/MMC Reader", serial: "000000002960",
                        size: 0, ptType: "", readOnly: false, suggestedFS: "vfat", partitions: []),
+            DemoDevice(name: "sr0", vendor: "HL-DT-ST", model: "DVDRAM GP57EB40", serial: "KZPH4G51234",
+                       size: 0, ptType: "", readOnly: true, suggestedFS: "vfat", partitions: [],
+                       optical: true),
         ]
     }
 }
@@ -523,6 +601,10 @@ final class DemoNode {
         case "sdc1", "FIRMWARE":
             root.add(file("printer-fw-4.2.1.bin", size: 18_874_368, minutesAgo: 300_000))
             root.add(file("README.txt", size: 1_204, minutesAgo: 300_000))
+        case "DEMO_DISC":
+            root.add(dir("install", [file("vmlinuz", size: 8_421_376, minutesAgo: 1),
+                                     file("initrd.gz", size: 31_457_280, minutesAgo: 1)], daysAgo: 0))
+            root.add(file("README.txt", size: 2_048, minutesAgo: 1))
         case "bootfs":
             root.add(file("config.txt", size: 1_220, minutesAgo: 1))
             root.add(file("cmdline.txt", size: 160, minutesAgo: 1))

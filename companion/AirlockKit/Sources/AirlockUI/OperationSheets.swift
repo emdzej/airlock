@@ -160,25 +160,15 @@ struct FlashSheet: View {
 
     private func choose(_ url: URL) {
         image?.stopAccessingSecurityScopedResource()
-        guard url.startAccessingSecurityScopedResource() else {
-            pickError = "Couldn't open \(url.lastPathComponent)."
-            return
-        }
-        // Make sure a cloud file is actually on the device before
-        // streaming it (coordinated reads download placeholders).
-        var coordError: NSError?
-        var size: Int64 = 0
-        NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordError) { local in
-            size = Int64((try? local.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        }
-        if let coordError {
-            pickError = coordError.localizedDescription
-            url.stopAccessingSecurityScopedResource()
+        image = nil
+        do {
+            imageSize = try openPickedFile(url)
+        } catch {
+            pickError = error.localizedDescription
             return
         }
         pickError = nil
         image = url
-        imageSize = size
         compression = Compression(fileName: url.lastPathComponent)
     }
 
@@ -186,6 +176,219 @@ struct FlashSheet: View {
         guard let image else { return }
         let (client, name, compression) = (client, device.name, compression)
         runner.start({ client.flash(name, image: image, compression: compression) }, onFinish: onFinish)
+    }
+}
+
+/// Starts access to a file picked in a file importer, so it can be
+/// streamed, and returns its size. Makes sure a cloud file is actually on
+/// the device first (coordinated reads download placeholders). The caller
+/// stops the security-scoped access when done.
+func openPickedFile(_ url: URL) throws -> Int64 {
+    guard url.startAccessingSecurityScopedResource() else {
+        throw AirlockError(status: nil, message: "Couldn't open \(url.lastPathComponent).")
+    }
+    var coordError: NSError?
+    var size: Int64 = 0
+    NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordError) { local in
+        size = Int64((try? local.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+    }
+    if let coordError {
+        url.stopAccessingSecurityScopedResource()
+        throw coordError
+    }
+    return size
+}
+
+/// Burn a disc image from Files onto the disc in an optical drive.
+struct BurnSheet: View {
+    let client: AirlockClient
+    let device: Device
+    var onFinish: () -> Void = {}
+
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var runner = OpRunner()
+    @State private var disc: DiscInfo?
+    @State private var discError: String?
+    @State private var checking = false
+    @State private var picking = false
+    @State private var image: URL?
+    @State private var imageSize: Int64 = 0
+    @State private var compression: Compression = .none
+    @State private var verify = true
+    @State private var eject = false
+    @State private var speed = 0
+    @State private var confirm = ""
+    @State private var pickError: String?
+
+    private let eraseWord = "ERASE"
+
+    /// Why the chosen image can't go onto this disc, if it can't.
+    private var imageProblem: String? {
+        guard let disc, image != nil else { return nil }
+        if compression == .none, disc.capacityBytes > 0, imageSize > disc.capacityBytes {
+            return "The image doesn't fit on the disc (room for \(bytes(disc.capacityBytes)))."
+        }
+        if imageSize > disc.cacheFreeBytes {
+            return "The airlock has only \(bytes(disc.cacheFreeBytes)) free to hold the image before burning it."
+        }
+        return nil
+    }
+
+    private var canStart: Bool {
+        guard let disc, disc.writable, image != nil, imageProblem == nil else { return false }
+        return !disc.erases || confirm == eraseWord
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent("Drive", value: device.title)
+                    discRow
+                } footer: {
+                    Text("Raw disc images (.iso, .img) and xz or gzip compressed ones are supported. The airlock receives the whole image before it starts burning, so a dropped upload leaves the disc untouched.")
+                }
+                Section("Image") {
+                    Button {
+                        picking = true
+                    } label: {
+                        if let image {
+                            LabeledContent(image.lastPathComponent, value: bytes(imageSize))
+                        } else {
+                            Label("Choose Image…", systemImage: "doc.badge.plus")
+                        }
+                    }
+                    if image != nil {
+                        Picker("Compression", selection: $compression) {
+                            Text("None (.iso)").tag(Compression.none)
+                            Text("xz (.iso.xz)").tag(Compression.xz)
+                            Text("gzip (.iso.gz)").tag(Compression.gz)
+                        }
+                    }
+                    if let problem = imageProblem ?? pickError {
+                        Text(problem).font(.caption).foregroundStyle(.red)
+                    }
+                }
+                .disabled(runner.phase != .idle)
+                Section {
+                    if let speeds = disc?.speeds, !speeds.isEmpty {
+                        Picker("Write Speed", selection: $speed) {
+                            Text("Maximum").tag(0)
+                            ForEach(speeds.reversed(), id: \.kbps) { Text($0.title).tag($0.kbps) }
+                        }
+                    }
+                    Toggle("Verify after burning", isOn: $verify)
+                    Toggle("Eject when done", isOn: $eject)
+                } footer: {
+                    Text((disc?.speeds.isEmpty == false ? "A slower speed can burn cheap discs more reliably. " : "")
+                         + (eject ? "The tray opens when the burn is done." : "The new disc is mounted and shared when the burn is done."))
+                }
+                .disabled(runner.phase != .idle)
+                if runner.phase == .idle, image != nil, disc?.erases == true {
+                    Section {
+                        ConfirmWordField(word: eraseWord, text: $confirm)
+                    } footer: {
+                        Text("This disc is rewritable: what's on it now is erased.")
+                    }
+                }
+                if runner.isRunning {
+                    Section {
+                        Label("Keep Airlock open until the upload finishes.", systemImage: "info.circle")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                OpProgressSection(runner: runner)
+            }
+            // Grouped sections on the Mac too (its default puts labels in a
+            // bare column), matching iOS.
+            .formStyle(.grouped)
+            .navigationTitle("Burn Image")
+            .inlineNavigationTitle()
+            .toolbar { sheetToolbar(runner: runner, dismiss: dismiss, action: "Burn",
+                                    enabled: canStart, start: start) }
+            .interactiveDismissDisabled(runner.isRunning)
+            .airlockBackground()
+            .sheetFrame()
+            .sensoryFeedback(trigger: runner.phase) { _, phase in
+                switch phase {
+                case .running: .warning
+                case .done: .success
+                case .failed: .error
+                default: nil
+                }
+            }
+            .fileImporter(isPresented: $picking, allowedContentTypes: [.diskImage, .data]) { result in
+                switch result {
+                case let .success(url): choose(url)
+                case let .failure(err): pickError = err.localizedDescription
+                }
+            }
+            .task { await checkDisc() }
+            .onChange(of: runner.phase) { _, phase in
+                // A failed burn may have used the disc up.
+                if case .failed = phase { Task { await checkDisc() } }
+            }
+            .onDisappear { image?.stopAccessingSecurityScopedResource() }
+        }
+    }
+
+    @ViewBuilder
+    private var discRow: some View {
+        if let disc {
+            if disc.writable {
+                LabeledContent("Disc", value: "\(disc.title) · room for \(bytes(disc.capacityBytes))")
+            } else {
+                LabeledContent("Disc") {
+                    Text(disc.reason ?? "Can't burn onto this disc.").foregroundStyle(.red)
+                }
+                checkAgainButton
+            }
+        } else if let discError {
+            LabeledContent("Disc") { Text(discError).foregroundStyle(.red) }
+            checkAgainButton
+        } else {
+            LabeledContent("Disc") { ProgressView().controlSize(.small) }
+        }
+    }
+
+    private var checkAgainButton: some View {
+        Button("Check Again", systemImage: "arrow.clockwise") { Task { await checkDisc() } }
+            .disabled(checking || runner.isRunning)
+    }
+
+    private func checkDisc() async {
+        guard !checking else { return }
+        checking = true
+        defer { checking = false }
+        do {
+            disc = try await client.disc(device.name)
+            discError = nil
+        } catch is CancellationError {
+        } catch {
+            disc = nil
+            discError = error.localizedDescription
+        }
+    }
+
+    private func choose(_ url: URL) {
+        image?.stopAccessingSecurityScopedResource()
+        image = nil
+        do {
+            imageSize = try openPickedFile(url)
+        } catch {
+            pickError = error.localizedDescription
+            return
+        }
+        pickError = nil
+        image = url
+        compression = Compression(fileName: url.lastPathComponent)
+    }
+
+    private func start() {
+        guard let image else { return }
+        let (client, name, compression, verify, eject, speed) = (client, device.name, compression, verify, eject, speed)
+        runner.start({ client.burn(name, image: image, compression: compression, verify: verify, eject: eject, speed: speed) },
+                     onFinish: onFinish)
     }
 }
 

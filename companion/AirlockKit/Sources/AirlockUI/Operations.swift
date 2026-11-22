@@ -1,7 +1,7 @@
 import AirlockKit
 import SwiftUI
 
-/// Drives one streamed airlockd operation (format, flash, fsck) for a
+/// Drives one streamed airlockd operation (format, flash, burn, fsck) for a
 /// sheet: stage text, byte counters, the tool's output lines and the
 /// outcome. Keeps the screen on while it runs, and asks iOS for
 /// background time so a quick app switch doesn't cut the request off.
@@ -15,6 +15,10 @@ final class OpRunner: ObservableObject {
     @Published private(set) var uploaded: Int64 = 0
     @Published private(set) var uploadTotal: Int64 = 0
     @Published private(set) var written: Int64 = 0
+    /// What `written` counts towards in the current stage (burn, verify).
+    @Published private(set) var total: Int64 = 0
+    /// The daemon's stage key ("burn", "verify", …).
+    @Published private(set) var stageKey = ""
     @Published private(set) var exitCode: Int?
 
     private var task: Task<Void, Never>?
@@ -27,7 +31,7 @@ final class OpRunner: ObservableObject {
         phase = .running
         stage = "Starting…"
         log = []
-        uploaded = 0; uploadTotal = 0; written = 0; exitCode = nil
+        uploaded = 0; uploadTotal = 0; written = 0; total = 0; stageKey = ""; exitCode = nil
 
         let awake = KeepAwake("airlock-operation")
 
@@ -55,7 +59,13 @@ final class OpRunner: ObservableObject {
             uploaded = sent
             uploadTotal = total
         case let .event(ev):
+            if ev.stage != "line", ev.stage != stageKey {
+                // A counted stage (burn, verify) starts its count afresh.
+                if total > 0 { written = 0; total = 0 }
+                stageKey = ev.stage
+            }
             if let w = ev.written { written = w }
+            if let t = ev.total { total = t }
             if let c = ev.exitCode { exitCode = c }
             switch ev.stage {
             case "line":
@@ -202,10 +212,12 @@ struct OpProgressSection: View {
         return runner.stage
     }
 
-    /// Upload or write progress, whichever is further along (compressed
+    /// The current stage's own count when it has one (burn, verify), else
+    /// upload or write progress, whichever is further along (compressed
     /// images write more than they upload), as the web UI does.
     private var fraction: Double? {
         if runner.phase == .done, runner.uploadTotal > 0 || runner.written > 0 { return 1 }
+        if runner.total > 0 { return min(Double(runner.written) / Double(runner.total), 0.99) }
         let up = runner.uploadTotal > 0 ? Double(runner.uploaded) / Double(runner.uploadTotal) : 0
         let wr = expectedBytes > 0 ? Double(runner.written) / Double(expectedBytes) : 0
         let f = max(up, wr)
@@ -214,6 +226,10 @@ struct OpProgressSection: View {
 
     private var stats: String {
         var parts: [String] = []
+        if runner.total > 0 {
+            let verb = runner.stageKey == "verify" ? "verified" : "burned"
+            return "\(verb) \(bytes(runner.written)) / \(bytes(runner.total))"
+        }
         if runner.written > 0 { parts.append("written \(bytes(runner.written))") }
         if runner.uploadTotal > 0 { parts.append("uploaded \(bytes(runner.uploaded)) / \(bytes(runner.uploadTotal))") }
         if let c = runner.exitCode { parts.append("exit code \(c)") }
