@@ -188,6 +188,55 @@
         </div>
     </dialog>
 
+    <dialog id="burn-dialog" class="format-dlg">
+        <h2>Burn image to disc</h2>
+        <div class="fmt-block">
+            <div id="burn-device"></div>
+            <div id="burn-disc" style="margin-top:4px;color:#555;"></div>
+        </div>
+        <div id="burn-erase" class="fmt-warn" hidden>
+            This disc is rewritable and will be <b>erased</b> before the
+            image is burned onto it.
+        </div>
+        <div class="fmt-block">
+            <label>Disc image (.iso / .img / .iso.xz / .iso.gz)<br>
+                <input id="burn-file" type="file" accept=".iso,.img,.udf,.xz,.gz">
+            </label>
+            <div id="burn-file-info" style="font-size:11px;color:#888;margin-top:4px;"></div>
+        </div>
+        <div class="fmt-block" id="burn-speed-block" hidden>
+            <label>Write speed<br>
+                <select id="burn-speed"></select>
+            </label>
+            <div style="font-size:11px;color:#888;margin-top:4px;">A slower speed can burn cheap discs more reliably.</div>
+        </div>
+        <div class="fmt-block fmt-fs">
+            <label><input type="checkbox" id="burn-verify" checked> Verify after burning
+                <small>read the disc back and compare</small></label>
+            <label><input type="checkbox" id="burn-eject"> Eject when done
+                <small>otherwise the disc is mounted</small></label>
+        </div>
+        <div class="fmt-block" id="burn-confirm" hidden>
+            <label>To confirm, type <b>ERASE</b><br>
+                <input id="burn-confirm-input" type="text" autocomplete="off">
+            </label>
+        </div>
+        <div id="burn-progress" hidden>
+            <div class="fmt-block">
+                <div id="burn-stage" class="fmt-stage"></div>
+                <div class="progress-bar" style="height:6px;background:#eee;border-radius:3px;margin-top:10px;overflow:hidden;">
+                    <div id="burn-fill" style="height:100%;width:0;background:#06c;transition:width 0.2s;"></div>
+                </div>
+                <div id="burn-stats" style="font-size:11px;color:#888;margin-top:4px;"></div>
+                <pre id="burn-log" hidden style="max-height:160px;overflow:auto;background:#111;color:#eee;padding:8px;border-radius:4px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;margin:10px 0 0;white-space:pre-wrap;"></pre>
+            </div>
+        </div>
+        <div class="dlg-actions">
+            <button type="button" id="burn-cancel">Cancel</button>
+            <button type="button" id="burn-submit" class="danger" disabled>Burn</button>
+        </div>
+    </dialog>
+
     <dialog id="relabel-dialog">
         <h2>Rename volume</h2>
         <form id="relabel-form">
@@ -308,15 +357,54 @@
             info.appendChild(title);
             const meta = document.createElement("div");
             meta.className = "dev-meta";
-            const pt = d.pt_type ? d.pt_type.toUpperCase() : "no partition table";
-            meta.textContent = `${d.size_human} · ${pt}` +
-                (d.transport ? ` · ${d.transport.toUpperCase()}` : "") +
-                (d.read_only ? " · read-only" : "");
+            if (d.optical) {
+                meta.textContent = "Optical drive · " + (d.size_bytes > 0 ? d.size_human + " disc" : "no readable disc") +
+                    (d.transport ? ` · ${d.transport.toUpperCase()}` : "");
+            } else {
+                const pt = d.pt_type ? d.pt_type.toUpperCase() : "no partition table";
+                meta.textContent = `${d.size_human} · ${pt}` +
+                    (d.transport ? ` · ${d.transport.toUpperCase()}` : "") +
+                    (d.read_only ? " · read-only" : "");
+            }
             info.appendChild(meta);
             head.appendChild(info);
             const actions = document.createElement("div");
             actions.className = "dev-actions";
             const hasMounted = d.partitions.some(p => p.is_airlock);
+            if (d.optical) {
+                // Eject also opens the tray, so it's there with no disc mounted.
+                const ej = document.createElement("button");
+                ej.textContent = "Eject";
+                ej.onclick = () => ejectDevice(d.name, ej);
+                actions.appendChild(ej);
+                const burn = document.createElement("button");
+                burn.className = "danger";
+                burn.textContent = "Burn…";
+                burn.title = "Burn a disc image onto a blank or rewritable disc";
+                burn.onclick = () => openBurnDialog(d);
+                actions.appendChild(burn);
+                if (d.size_bytes > 0) {
+                    const dump = document.createElement("button");
+                    dump.textContent = "Dump…";
+                    dump.title = "Download the disc as an image";
+                    dump.onclick = () => openDumpDialog(d);
+                    actions.appendChild(dump);
+                }
+                head.appendChild(actions);
+                el.appendChild(head);
+                if (d.partitions.length > 0) {
+                    const ul = document.createElement("ul");
+                    ul.className = "parts";
+                    for (const p of d.partitions) ul.appendChild(renderPartition(p));
+                    el.appendChild(ul);
+                } else {
+                    const np = document.createElement("div");
+                    np.className = "no-parts";
+                    np.textContent = d.size_bytes > 0 ? "No mountable filesystem on the disc." : "No disc, or a blank one.";
+                    el.appendChild(np);
+                }
+                return el;
+            }
             if (hasMounted) {
                 const ej = document.createElement("button");
                 ej.textContent = "Eject";
@@ -849,6 +937,243 @@
             $("flash-cancel").disabled = false;
         }
         // ---- end Flash dialog ----
+
+        // ---- Burn dialog ----
+        // The Pi caches the whole upload before touching the disc, so the
+        // dialog can be cancelled until the burn itself starts.
+        let burnDevice = null;
+        let burnDisc = null;
+        let burnCompression = "none";
+        let burnXHR = null;
+        let burnStarted = false;
+
+        async function openBurnDialog(d) {
+            burnDevice = d;
+            burnDisc = null;
+            burnXHR = null;
+            burnStarted = false;
+            const title = [d.vendor, d.model].filter(Boolean).join(" ").trim() || d.name;
+            $("burn-device").textContent = `${title} (/dev/${d.name})`;
+            $("burn-disc").textContent = "Checking the disc…";
+            $("burn-disc").style.color = "#555";
+            $("burn-erase").hidden = true;
+            $("burn-confirm").hidden = true;
+            $("burn-confirm-input").value = "";
+            $("burn-file").value = "";
+            $("burn-file").disabled = false;
+            $("burn-file-info").textContent = "";
+            $("burn-verify").checked = true;
+            $("burn-eject").checked = false;
+            $("burn-speed").disabled = false;
+            $("burn-speed-block").hidden = true;
+            $("burn-progress").hidden = true;
+            $("burn-stage").classList.remove("err");
+            $("burn-log").textContent = "";
+            $("burn-log").hidden = true;
+            $("burn-submit").disabled = true;
+            $("burn-submit").textContent = "Burn";
+            $("burn-cancel").disabled = false;
+            $("burn-cancel").textContent = "Cancel";
+            burnCompression = "none";
+            $("burn-dialog").showModal();
+            try {
+                const r = await fetch(`/api/devices/${encodeURIComponent(d.name)}/disc`);
+                const body = await r.json().catch(() => ({}));
+                if (burnDevice !== d) return;
+                if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+                burnDisc = body;
+                if (body.writable) {
+                    const kind = body.status === "blank" ? `Blank ${body.media}` : body.media;
+                    $("burn-disc").textContent = `${kind} — room for ${humanBytes(body.capacity_bytes)}`;
+                    $("burn-erase").hidden = !body.erases;
+                    $("burn-confirm").hidden = !body.erases;
+                    const sel = $("burn-speed");
+                    sel.replaceChildren(new Option("Maximum", "0", true, true));
+                    for (const sp of (body.speeds || []).slice().reverse()) {
+                        sel.add(new Option(`${sp.label} (${(sp.kbps / 1000).toFixed(1)} MB/s)`, String(sp.kbps)));
+                    }
+                    $("burn-speed-block").hidden = !(body.speeds && body.speeds.length);
+                } else {
+                    $("burn-disc").textContent = (body.media ? body.media + ": " : "") + body.reason;
+                    $("burn-disc").style.color = "#a10000";
+                }
+            } catch (e) {
+                if (burnDevice !== d) return;
+                $("burn-disc").textContent = "Couldn't read the disc: " + e.message;
+                $("burn-disc").style.color = "#a10000";
+            }
+            checkBurnFile();
+        }
+
+        $("burn-cancel").onclick = () => {
+            if (burnXHR && !burnStarted) burnXHR.abort();
+            $("burn-dialog").close();
+        };
+        $("burn-file").onchange = checkBurnFile;
+        $("burn-confirm-input").oninput = checkBurnFile;
+        $("burn-submit").onclick = startBurn;
+
+        function checkBurnFile() {
+            const f = $("burn-file").files[0];
+            const info = $("burn-file-info");
+            info.style.color = "#888";
+            let ok = !!(f && burnDisc && burnDisc.writable);
+            if (f) {
+                burnCompression = detectCompression(f.name);
+                info.textContent = humanBytes(f.size) +
+                    (burnCompression !== "none" ? ` — will decompress on the Pi (${burnCompression})` : "");
+                if (burnDisc && burnDisc.writable) {
+                    if (burnCompression === "none" && burnDisc.capacity_bytes > 0 && f.size > burnDisc.capacity_bytes) {
+                        info.textContent += ` — DOESN'T FIT ON THE DISC (${humanBytes(burnDisc.capacity_bytes)})`;
+                        info.style.color = "#a10000";
+                        ok = false;
+                    } else if (f.size > burnDisc.cache_free_bytes) {
+                        info.textContent += ` — the Pi has only ${humanBytes(burnDisc.cache_free_bytes)} free to cache it`;
+                        info.style.color = "#a10000";
+                        ok = false;
+                    }
+                }
+            } else {
+                info.textContent = "";
+            }
+            if (burnDisc && burnDisc.erases && $("burn-confirm-input").value !== "ERASE") ok = false;
+            $("burn-submit").disabled = !ok;
+        }
+
+        function startBurn() {
+            const file = $("burn-file").files[0];
+            if (!file || !burnDevice) return;
+            $("burn-progress").hidden = false;
+            $("burn-stage").classList.remove("err");
+            $("burn-stage").textContent = "Uploading…";
+            $("burn-fill").style.width = "0%";
+            $("burn-stats").textContent = "";
+            $("burn-log").textContent = "";
+            $("burn-log").hidden = true;
+            $("burn-submit").disabled = true;
+            $("burn-submit").textContent = "Burning…";
+            $("burn-file").disabled = true;
+            $("burn-speed").disabled = true;
+            burnStarted = false;
+
+            const q = new URLSearchParams({
+                compression: burnCompression,
+                verify: $("burn-verify").checked ? "1" : "0",
+                eject: $("burn-eject").checked ? "1" : "0",
+                speed: $("burn-speed").value || "0",
+            });
+            const xhr = new XMLHttpRequest();
+            burnXHR = xhr;
+            xhr.open("POST", `/api/devices/${encodeURIComponent(burnDevice.name)}/burn?${q}`);
+            xhr.setRequestHeader("Content-Type", "application/octet-stream");
+
+            let uploaded = 0, uploadTotal = file.size;
+            let stage = "", written = 0, total = 0;
+            xhr.upload.onprogress = (ev) => {
+                if (!ev.lengthComputable) return;
+                uploaded = ev.loaded; uploadTotal = ev.total;
+                updateBar();
+            };
+
+            let buf = "", cursor = 0, finished = false;
+            xhr.onprogress = () => {
+                buf += xhr.responseText.substring(cursor);
+                cursor = xhr.responseText.length;
+                // Keep a trailing partial event for the next round.
+                const chunks = buf.split("\n\n");
+                buf = chunks.pop();
+                for (const chunk of chunks) {
+                    const dataLine = chunk.split("\n").find(l => l.startsWith("data: "));
+                    if (!dataLine) continue;
+                    let ev;
+                    try { ev = JSON.parse(dataLine.slice(6)); } catch { continue; }
+                    if (ev.stage === "line") {
+                        $("burn-log").hidden = false;
+                        $("burn-log").textContent += ev.message + "\n";
+                        $("burn-log").scrollTop = $("burn-log").scrollHeight;
+                        continue;
+                    }
+                    if (ev.stage !== stage) { written = 0; total = 0; }
+                    stage = ev.stage;
+                    // Once the drive is in use, closing the dialog no
+                    // longer stops anything.
+                    if (["unmount", "burn", "verify", "eject"].includes(stage) && !burnStarted) {
+                        burnStarted = true;
+                        $("burn-cancel").textContent = "Close";
+                    }
+                    if (ev.message) $("burn-stage").textContent = ev.message;
+                    if (typeof ev.written === "number") written = ev.written;
+                    if (typeof ev.total === "number") total = ev.total;
+                    if (stage === "error") { finished = true; burnError(ev.message || "unknown"); return; }
+                    if (stage === "done") {
+                        finished = true;
+                        $("burn-fill").style.width = "100%";
+                        $("burn-stats").textContent = "";
+                        $("burn-cancel").textContent = "Close";
+                        $("burn-submit").textContent = "Burn";
+                        lastSig = ""; load(true);
+                        return;
+                    }
+                    updateBar();
+                }
+            };
+
+            function updateBar() {
+                let pct = 0, text = "";
+                if (total > 0) {
+                    pct = written / total * 100;
+                    const verb = stage === "verify" ? "verified" : "burned";
+                    text = `${verb} ${humanBytes(written)} / ${humanBytes(total)}`;
+                } else if (uploadTotal > 0 && !burnStarted) {
+                    pct = uploaded / uploadTotal * 100;
+                    text = `uploaded ${humanBytes(uploaded)} / ${humanBytes(uploadTotal)}`;
+                    if (uploaded >= uploadTotal) text += " — the Pi is caching the image";
+                }
+                $("burn-fill").style.width = Math.min(99, pct) + "%";
+                $("burn-stats").textContent = text;
+            }
+
+            xhr.onabort = () => { finished = true; };
+            xhr.onerror = () => { if (!finished) burnError("network error"); };
+            xhr.onload = () => {
+                if (finished) return;
+                if (xhr.status !== 200) {
+                    let msg = "HTTP " + xhr.status;
+                    try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+                    burnError(msg);
+                } else {
+                    burnError("the burn ended without reporting a result");
+                }
+            };
+            xhr.send(file);
+        }
+
+        function burnError(msg) {
+            $("burn-stage").classList.add("err");
+            $("burn-stage").textContent = msg;
+            $("burn-submit").textContent = "Burn";
+            $("burn-file").disabled = false;
+            $("burn-speed").disabled = false;
+            $("burn-cancel").textContent = "Close";
+            burnStarted = false;
+            burnXHR = null;
+            // A failed burn may have used up the disc: check it again.
+            if (burnDevice) refreshBurnDisc(burnDevice);
+        }
+
+        async function refreshBurnDisc(d) {
+            try {
+                const r = await fetch(`/api/devices/${encodeURIComponent(d.name)}/disc`);
+                if (!r.ok) return;
+                burnDisc = await r.json();
+                if (!burnDisc.writable) {
+                    $("burn-disc").textContent = (burnDisc.media ? burnDisc.media + ": " : "") + burnDisc.reason;
+                    $("burn-disc").style.color = "#a10000";
+                }
+            } catch {}
+            checkBurnFile();
+        }
+        // ---- end Burn dialog ----
 
         // ---- Dump dialog ----
         let dumpDevice = null;

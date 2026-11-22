@@ -167,7 +167,7 @@ apt-get install -y --no-install-recommends \
     avahi-daemon libnss-mdns \
     exfatprogs ntfs-3g dosfstools e2fsprogs hfsprogs \
     gdisk parted util-linux \
-    xz-utils smartmontools \
+    xz-utils smartmontools xorriso \
     ca-certificates curl
 # smartmontools is there for smartctl, which airlockd runs on demand for
 # the Devices page's SMART health. Its smartd monitor isn't wanted: it

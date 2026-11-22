@@ -28,9 +28,15 @@ func (s *Server) beginOp(w http.ResponseWriter, disk, op string) (release func()
 }
 
 // requireWritableDevice refuses destructive whole-disk operations on
-// write-protected media: either the disk itself is RO, or one of its
+// optical drives (burn has its own checks) and on write-protected media: either the disk itself is RO, or one of its
 // mounted partitions is (possible for iso9660 hybrid layouts).
 func (s *Server) requireWritableDevice(w http.ResponseWriter, dev devices.Device) bool {
+	if dev.Optical {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "optical drives can't be formatted or flashed; burn an image instead",
+		})
+		return false
+	}
 	if dev.ReadOnly {
 		writeJSON(w, http.StatusForbidden, map[string]string{
 			"error": "device is read-only (write-protect switch?)",

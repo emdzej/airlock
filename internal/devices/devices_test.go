@@ -43,3 +43,25 @@ func TestValidKernelName(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertNodeOptical(t *testing.T) {
+	disc := convertNode(lsblkNode{
+		Name: "sr0", Type: "rom", Tran: "usb", Size: 4_700_000_000,
+		FSType: "iso9660", Label: "DEBIAN", MountPoint: "/mnt/airlock/DEBIAN",
+	})
+	if !disc.Optical || len(disc.Partitions) != 1 {
+		t.Fatalf("got %+v", disc)
+	}
+	if p := disc.Partitions[0]; p.Name != "sr0" || p.FSType != "iso9660" || p.Label != "DEBIAN" || !p.IsAirlock {
+		t.Errorf("disc partition = %+v", p)
+	}
+
+	empty := convertNode(lsblkNode{Name: "sr0", Type: "rom", Tran: "usb"})
+	if !empty.Optical || len(empty.Partitions) != 0 {
+		t.Errorf("empty drive = %+v", empty)
+	}
+	// A superfloppy USB stick keeps its existing shape.
+	if d := convertNode(lsblkNode{Name: "sda", Type: "disk", FSType: "vfat"}); d.Optical || len(d.Partitions) != 0 {
+		t.Errorf("disk = %+v", d)
+	}
+}

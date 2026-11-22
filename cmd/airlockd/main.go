@@ -83,6 +83,9 @@ func run(ctx context.Context) error {
 	if hosts := os.Getenv("AIRLOCK_ALLOWED_HOSTS"); hosts != "" {
 		apiSrv.SetAllowedHosts(strings.Split(hosts, ","))
 	}
+	// Where uploaded disc images wait to be burned. The default is on the
+	// root filesystem: point it at disk-backed storage on a tmpfs root.
+	apiSrv.SetBurnCache(os.Getenv("AIRLOCK_BURN_CACHE"))
 	// Attach the API server as an additional mount listener so its
 	// SSE event stream sees the same snapshots the samba writer does.
 	mgr.AddListener(func(snap mount.Snapshot) {

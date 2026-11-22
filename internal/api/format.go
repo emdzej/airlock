@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/emdzej/airlock/internal/burn"
 	"github.com/emdzej/airlock/internal/devices"
 	"github.com/emdzej/airlock/internal/format"
 	"github.com/emdzej/airlock/internal/fsck"
@@ -58,6 +59,7 @@ type devicePayload struct {
 	Transport   string             `json:"transport"`
 	PTType      string             `json:"pt_type"`
 	ReadOnly    bool               `json:"read_only"`
+	Optical     bool               `json:"optical"`
 	AnyRO       bool               `json:"any_partition_read_only"`
 	SuggestedFS string             `json:"suggested_fs"`
 	Health      smart.Status       `json:"health,omitempty"` // cached SMART verdict; "" until read
@@ -125,6 +127,7 @@ func (s *Server) devicePayload(d devices.Device) devicePayload {
 		Transport:   d.Transport,
 		PTType:      d.PTType,
 		ReadOnly:    d.ReadOnly,
+		Optical:     d.Optical,
 		AnyRO:       anyRO,
 		SuggestedFS: suggested,
 		Health:      s.smart.peek(d),
@@ -193,10 +196,12 @@ func (s *Server) handleFormat(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/devices/{parent}/eject — unmounts every partition of the device
-// that airlock currently owns. No-op if nothing is mounted.
+// that airlock currently owns, and opens an optical drive's tray. No-op
+// (apart from the tray) if nothing is mounted.
 func (s *Server) handleDeviceEject(w http.ResponseWriter, r *http.Request) {
 	parent := r.PathValue("parent")
-	if _, err := devices.Get(parent); err != nil {
+	dev, err := devices.Get(parent)
+	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
@@ -205,6 +210,14 @@ func (s *Server) handleDeviceEject(w http.ResponseWriter, r *http.Request) {
 	if err := s.mgr.Eject(parent); err != nil && !errors.Is(err, mount.ErrNotMounted) {
 		writeJSON(w, ejectStatus(err), map[string]string{"error": err.Error()})
 		return
+	}
+	// An optical drive also opens its tray, unless a burn holds it.
+	if dev.Optical {
+		if _, running := s.mgr.RunningOp(parent); !running {
+			if err := burn.EjectTray(dev.Path); err != nil {
+				slog.Warn("eject tray", "dev", dev.Path, "err", err)
+			}
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

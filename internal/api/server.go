@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emdzej/airlock/internal/burn"
 	"github.com/emdzej/airlock/internal/flash"
 	"github.com/emdzej/airlock/internal/format"
 	"github.com/emdzej/airlock/internal/fsck"
@@ -37,6 +38,7 @@ type Server struct {
 	mgr     *mount.Manager
 	fmtr    *format.Formatter
 	flsh    *flash.Flasher
+	burner  *burn.Burner
 	fsck    *fsck.Checker
 	tmpl    *template.Template
 	onBusy  BusyFunc
@@ -65,6 +67,7 @@ func New(mgr *mount.Manager, onBusy BusyFunc, version string) (*Server, error) {
 		mgr:     mgr,
 		fmtr:    format.New(mgr),
 		flsh:    flash.New(mgr),
+		burner:  burn.New(mgr, burn.DefaultCacheDir),
 		fsck:    fsck.New(mgr),
 		tmpl:    tmpl,
 		onBusy:  onBusy,
@@ -119,6 +122,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/devices/{parent}/flash", s.handleFlash)
 	mux.HandleFunc("GET /api/devices/{parent}/dump", s.handleDump)
 	mux.HandleFunc("GET /api/devices/{parent}/smart", s.handleSmart)
+	mux.HandleFunc("GET /api/devices/{parent}/disc", s.handleDisc)
+	mux.HandleFunc("POST /api/devices/{parent}/burn", s.handleBurn)
 	// Partition-level operations
 	mux.HandleFunc("POST /api/partitions/{name}/label", s.handleSetLabel)
 	mux.HandleFunc("POST /api/partitions/{name}/mount", s.handleMountPartition)

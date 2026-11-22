@@ -19,7 +19,7 @@ import (
 // isn't present, isn't USB-attached, or backs the running system.
 var ErrNotFound = errors.New("device not found")
 
-// Device is a whole-disk USB block device.
+// Device is a whole-disk USB block device, or a USB optical drive.
 type Device struct {
 	Name       string      `json:"name"`  // kernel name, e.g. "sdb"
 	Path       string      `json:"path"`  // /dev path, e.g. "/dev/sdb"
@@ -30,6 +30,7 @@ type Device struct {
 	Transport  string      `json:"transport"` // "usb"
 	PTType     string      `json:"pt_type"`   // "dos" (MBR), "gpt", "" (none)
 	ReadOnly   bool        `json:"read_only"`
+	Optical    bool        `json:"optical"` // CD/DVD/BD drive (lsblk TYPE "rom"); SizeBytes is the disc's
 	Partitions []Partition `json:"partitions"`
 }
 
@@ -44,7 +45,8 @@ type Partition struct {
 	IsAirlock  bool   `json:"is_airlock"`  // true if mounted under /mnt/airlock/
 }
 
-// List returns every USB-attached whole-disk device currently visible.
+// List returns every USB-attached whole-disk device and optical drive
+// currently visible.
 // Non-USB devices (the Pi's own boot media, virtual loop devices) are
 // filtered out, and so is any USB disk the running system depends on —
 // on a Pi booted from a USB SSD that's the root disk, which must never be
@@ -57,7 +59,7 @@ func List() ([]Device, error) {
 	system := SystemDisks()
 	var out []Device
 	for _, n := range nodes {
-		if n.Type != "disk" || n.Tran != "usb" || system[n.Name] {
+		if (n.Type != "disk" && n.Type != "rom") || n.Tran != "usb" || system[n.Name] {
 			continue
 		}
 		out = append(out, convertNode(n))
@@ -255,6 +257,12 @@ func convertNode(n lsblkNode) Device {
 		Transport: n.Tran,
 		PTType:    n.PTType,
 		ReadOnly:  n.RO,
+		Optical:   n.Type == "rom",
+	}
+	// A disc's filesystem sits on the drive itself (sr0 has no partitions):
+	// list it as the one partition, so it shows up like any other.
+	if d.Optical && n.FSType != "" {
+		n.Children = []lsblkNode{n}
 	}
 	for _, c := range n.Children {
 		d.Partitions = append(d.Partitions, Partition{

@@ -92,7 +92,7 @@ func fresh(r *smart.Report) bool { return hasData(r) && time.Since(r.CheckedAt) 
 // probe (one that doesn't wake the drive) if the last one is smartTTL
 // old. Empty slots and disks under a format / flash / dump aren't probed.
 func (c *smartCache) peek(d devices.Device) smart.Status {
-	if d.SizeBytes == 0 {
+	if d.SizeBytes == 0 || d.Optical {
 		return ""
 	}
 	c.mu.Lock()
@@ -166,6 +166,12 @@ func (s *Server) handleSmart(w http.ResponseWriter, r *http.Request) {
 	d, err := devices.Get(r.PathValue("parent"))
 	if err != nil {
 		writeJSON(w, lookupStatus(err), map[string]string{"error": err.Error()})
+		return
+	}
+	if d.Optical {
+		writeJSON(w, http.StatusOK, smart.Report{
+			Status: smart.StatusUnsupported, Summary: "Optical drives don't report SMART health.", CheckedAt: time.Now(),
+		})
 		return
 	}
 	if d.SizeBytes == 0 {

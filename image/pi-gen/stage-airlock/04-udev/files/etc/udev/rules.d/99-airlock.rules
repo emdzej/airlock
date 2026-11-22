@@ -6,8 +6,10 @@
 # of split between udev rules and Go code.
 #
 # We deliberately match ONLY USB-attached block devices (SUBSYSTEM=block,
-# KERNEL=sd*, ID_BUS=usb). The Pi's own boot media (mmcblk0*) shows up as
+# KERNEL=sd* for drives and card readers, sr* for CD/DVD/BD drives,
+# ID_BUS=usb). The Pi's own boot media (mmcblk0*) shows up as
 # a native SD device, and we never want to touch it — exposing /boot/firmware
 # or / over SMB would be a critical security regression.
 
 SUBSYSTEM=="block", KERNEL=="sd[a-z]*", ENV{ID_BUS}=="usb", ENV{AIRLOCK_MANAGED}="1"
+SUBSYSTEM=="block", KERNEL=="sr[0-9]*", ENV{ID_BUS}=="usb", ENV{AIRLOCK_MANAGED}="1"

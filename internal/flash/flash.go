@@ -114,52 +114,12 @@ func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) 
 	}
 	syscall.Sync()
 
-	// Cancelling ctx on any failure kills the xz child. Without this a
-	// failed device write would leave xz blocked on a full stdout pipe and
-	// the deferred Wait would hang forever.
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Wire up the source stream. For xz we shell out; for gz we use the
-	// stdlib. For raw uploads Source is the reader as-is.
-	source := req.Source
-	var (
-		xzCmd *exec.Cmd
-		xzErr strings.Builder
-	)
-	switch req.Compression {
-	case CompressionXZ:
-		xzCmd = exec.CommandContext(ctx, "xz", "-dc")
-		xzCmd.Stdin = req.Source
-		xzCmd.Stderr = &xzErr
-		// Don't let Wait hang on the stdin copier if the client stalls
-		// after we've killed xz.
-		xzCmd.WaitDelay = 5 * time.Second
-		stdout, err := xzCmd.StdoutPipe()
-		if err != nil {
-			return fmt.Errorf("xz stdout pipe: %w", err)
-		}
-		if err := xzCmd.Start(); err != nil {
-			return fmt.Errorf("xz start: %w", err)
-		}
-		// On failure paths: kill xz, then reap it. The success path below
-		// calls Wait itself so xz's exit status (corrupt input, truncated
-		// upload) turns into a flash error.
-		defer func() {
-			if xzCmd != nil {
-				cancel()
-				_ = xzCmd.Wait()
-			}
-		}()
-		source = stdout
-	case CompressionGZ:
-		gzr, err := gzip.NewReader(req.Source)
-		if err != nil {
-			return fmt.Errorf("gzip reader: %w", err)
-		}
-		defer gzr.Close()
-		source = gzr
+	dec, err := NewDecoder(ctx, req.Source, req.Compression)
+	if err != nil {
+		return err
 	}
+	defer dec.Abort()
+	var source io.Reader = dec
 
 	emit("write", "writing to "+dev)
 	// O_EXCL on a block device fails with EBUSY if anything (a mount, the
@@ -198,12 +158,8 @@ func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) 
 			return fmt.Errorf("read source: %w", rerr)
 		}
 	}
-	if xzCmd != nil {
-		werr := xzCmd.Wait()
-		xzCmd = nil // reaped
-		if werr != nil {
-			return fmt.Errorf("xz: %w: %s", werr, strings.TrimSpace(xzErr.String()))
-		}
+	if err := dec.Finish(); err != nil {
+		return err
 	}
 	// Final "here's the total" event so the UI shows the last number.
 	progress(Event{Stage: "write", Written: written})
@@ -232,4 +188,86 @@ func (f *Flasher) Flash(ctx context.Context, req Request, progress func(Event)) 
 	emit("done", fmt.Sprintf("flash complete — wrote %d bytes", written))
 	slog.Info("flashed", "dev", dev, "bytes", written, "compression", req.Compression)
 	return nil
+}
+
+// Decoder decompresses an image stream as it is read. Finish must follow
+// a read to EOF so a corrupt or truncated xz input becomes an error; Abort
+// (safe to defer, a no-op after Finish) kills an unfinished decoder.
+type Decoder struct {
+	io.Reader
+	cancel context.CancelFunc
+	xz     *exec.Cmd
+	xzErr  *strings.Builder
+	gz     *gzip.Reader
+}
+
+// NewDecoder wraps src in the decoder for c. For xz we shell out; for gz
+// we use the stdlib; uncompressed input is passed through as is.
+func NewDecoder(ctx context.Context, src io.Reader, c Compression) (*Decoder, error) {
+	switch c {
+	case CompressionXZ:
+		// Cancelling ctx (Abort) kills the xz child. Without this a failed
+		// device write would leave xz blocked on a full stdout pipe and
+		// the Wait would hang forever.
+		ctx, cancel := context.WithCancel(ctx)
+		d := &Decoder{cancel: cancel, xzErr: &strings.Builder{}}
+		d.xz = exec.CommandContext(ctx, "xz", "-dc")
+		d.xz.Stdin = src
+		d.xz.Stderr = d.xzErr
+		// Don't let Wait hang on the stdin copier if the client stalls
+		// after we've killed xz.
+		d.xz.WaitDelay = 5 * time.Second
+		stdout, err := d.xz.StdoutPipe()
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("xz stdout pipe: %w", err)
+		}
+		if err := d.xz.Start(); err != nil {
+			cancel()
+			return nil, fmt.Errorf("xz start: %w", err)
+		}
+		d.Reader = stdout
+		return d, nil
+	case CompressionGZ:
+		gzr, err := gzip.NewReader(src)
+		if err != nil {
+			return nil, fmt.Errorf("gzip reader: %w", err)
+		}
+		return &Decoder{Reader: gzr, gz: gzr}, nil
+	case CompressionNone:
+		return &Decoder{Reader: src}, nil
+	}
+	return nil, fmt.Errorf("unsupported compression: %q", c)
+}
+
+// Finish reaps the decoder once its output has been read to EOF and
+// reports xz's exit status (corrupt input, truncated upload).
+func (d *Decoder) Finish() error {
+	if d.gz != nil {
+		d.gz.Close()
+		d.gz = nil
+	}
+	if d.xz == nil {
+		return nil
+	}
+	werr := d.xz.Wait()
+	d.xz = nil // reaped
+	d.cancel()
+	if werr != nil {
+		return fmt.Errorf("xz: %w: %s", werr, strings.TrimSpace(d.xzErr.String()))
+	}
+	return nil
+}
+
+// Abort kills and reaps an unfinished decoder.
+func (d *Decoder) Abort() {
+	if d.gz != nil {
+		d.gz.Close()
+		d.gz = nil
+	}
+	if d.xz != nil {
+		d.cancel()
+		_ = d.xz.Wait()
+		d.xz = nil
+	}
 }
