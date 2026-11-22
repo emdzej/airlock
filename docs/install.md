@@ -135,6 +135,11 @@ config without touching state on mounted drives.
 | `AIRLOCK_FAST_BOOT`     | `1` to disable services + BT firmware not needed on a headless appliance |
 | `AIRLOCK_DISABLE_WIFI`  | `1` to disable the Wi-Fi radio (only if this Pi is on Ethernet)      |
 
+`airlockd` itself reads `AIRLOCK_ALLOWED_HOSTS` (see "Additional
+hardening") and `AIRLOCK_BURN_CACHE` (see
+[Burning disc images](#burning-disc-images)) from its service
+environment.
+
 Pass variables **after** `sudo` — `sudo` resets the environment, so
 `AIRLOCK_X=1 curl … | sudo bash` silently drops them. Example — install a
 pinned version:
@@ -163,7 +168,7 @@ sudo apt-get install -y \
     samba samba-common-bin \
     avahi-daemon libnss-mdns \
     exfatprogs ntfs-3g dosfstools e2fsprogs hfsprogs \
-    gdisk parted xz-utils smartmontools
+    gdisk parted xz-utils smartmontools xorriso
 sudo systemctl disable --now smartmontools.service   # airlockd runs smartctl itself
 ```
 
@@ -281,6 +286,40 @@ never lands on the Pi's boot SD, only on the target.
 - Verify-after-write pass — planned; add `?verify=1` when available.
 - Cancellation mid-flash — safer to always complete than leave a
   half-written device.
+
+## Burning disc images
+
+The Devices tab has a **Burn…** action for USB CD/DVD/BD writers. The
+Pi receives the whole image into a cache directory before it starts the
+burn (see the [user guide](/guide#burning-a-disc-image)), so it needs
+free space for the largest image you burn: 700 MB for a CD, 4.7 GB
+(8.5 GB dual layer) for a DVD, 25–50 GB for a Blu-ray. The image is
+deleted after the burn, and any left over from a crash when airlockd
+starts.
+
+The cache is `/var/cache/airlock/burn`. On a Pi with a writable root on
+an SSD or a big SD card that's all you need. On the
+[flashed image](#flash-the-image) `/` is a tmpfs overlay, so the cache
+is in RAM: CD images fit, DVD and Blu-ray ones are refused for lack of
+space before the upload starts. Point the cache at disk-backed storage
+with `AIRLOCK_BURN_CACHE`, in a drop-in written inside
+`sudo overlayroot-chroot` on the flashed image:
+
+```sh
+sudo systemctl edit airlockd
+# add:
+#   [Service]
+#   Environment=AIRLOCK_BURN_CACHE=/srv/burn-cache
+sudo systemctl restart airlockd
+```
+
+Don't point it at a drive airlock mounts and shares (`/mnt/airlock/…`):
+it's unmounted when ejected or unplugged.
+
+**Power.** Slim USB DVD and Blu-ray writers draw more than a thumb
+drive, most of all while burning, and the Pi 4's USB ports share about
+1.2 A. If the drive spins up and drops off, or a burn fails with I/O
+errors, power it from a Y-cable or a powered hub.
 
 ## Post-install
 

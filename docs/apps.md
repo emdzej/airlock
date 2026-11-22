@@ -2,8 +2,8 @@
 
 Airlock's native apps find every Airlock on your network by themselves
 and do everything the [web UI](/guide#from-the-web-ui) does: browse
-and eject drives, format, flash and back up whole devices, check
-filesystems and rename volumes. The Mac and iOS apps share the same
+and eject drives, format, flash and back up whole devices, burn disc
+images onto CDs, DVDs and Blu-rays, check filesystems and rename volumes. The Mac and iOS apps share the same
 screens.
 
 <div class="airlock-shot airlock-shot--mac">
@@ -20,7 +20,8 @@ appears. **Open Airlock…** in the menu opens the full window.
   them, device details with partitions and drive health (SMART), with
   a badge on drives that report a problem.
 - **Device tools in the toolbar:** Format, Flash Image, Save Image and
-  Eject, the way Disk Utility does it.
+  Eject, the way Disk Utility does it; Burn Image, Save Image and Eject
+  Disc for an optical drive.
 - **Partitions:** mount, rename and check (fsck) with the tool's
   output as it runs.
 - **Files:** browse a drive, preview, upload, rename, delete.
@@ -51,7 +52,7 @@ first.
 
 While no airlock is found, the first screen offers **Try a Demo
 Airlock**: a pretend airlock with drives, devices and files that lives
-inside the app. Browse, upload, eject, format, flash and check
+inside the app. Browse, upload, eject, format, flash, burn and check
 filesystems on it to see how everything works; nothing leaves your
 device. **End Demo** in its ⋯ menu removes it, and it goes by itself
 once a real airlock turns up.

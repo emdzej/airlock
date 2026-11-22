@@ -10,6 +10,29 @@ changes are allowed between minor versions.
 
 ### Added
 
+- **Burn disc images** onto CD, DVD and Blu-ray in a USB optical drive,
+  from the Devices page and the apps: pick an `.iso` / `.img` (or an
+  `.iso.xz` / `.iso.gz`); blank discs are written, rewritable ones
+  erased first (type `ERASE` to confirm), and the disc is read back and
+  compared with the image afterwards (on by default). The Pi receives
+  the whole image before touching the disc, so a dropped upload leaves
+  the disc untouched. Burned with `xorriso` in one session (disc-at-once),
+  at the drive's maximum speed or a slower one picked from the speeds the
+  drive offers for the disc.
+- **USB optical drives** on the Devices page: a mounted disc (ISO 9660,
+  UDF) is shared read-only like any drive, **Dump…** saves it as an
+  image, and **Eject** opens the tray. No format, flash or SMART on them.
+- API: `GET /api/devices/{name}/disc` (media, blank / written, room for
+  an image, write speeds, free cache space) and
+  `POST /api/devices/{name}/burn?compression=none|xz|gz&verify=0|1&eject=0|1&speed=<kB/s>`
+  (SSE progress; burn and verify events carry `written` and `total`).
+  Devices carry `optical`. Format and flash answer 400 for optical drives.
+- `AIRLOCK_BURN_CACHE`: where images wait to be burned (default
+  `/var/cache/airlock/burn`, which needs disk-backed storage for DVD and
+  Blu-ray images).
+- `xorriso` in the image and `install.sh`; the udev rule tags USB `sr*`
+  devices.
+
 - **Drive health (SMART)** on the Devices page and in the apps: the
   verdict (healthy / warning / failing), temperature, power-on hours,
   power cycles, SSD wear and spare, sector and media error counters,

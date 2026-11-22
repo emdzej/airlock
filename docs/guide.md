@@ -104,6 +104,12 @@ transport (always `USB`), and drive health for drives with SMART data
 | **Flash…** | Overwrite the whole device with an image (`.img` / `.img.xz` / `.img.gz`) |
 | **Dump…** | Download the whole device as a disk image, compressed on the fly |
 
+USB CD/DVD/BD drives show up as **Optical drive** with their own set:
+**Eject** (unmounts the disc and opens the tray), **Burn…** (see
+[Burning a disc image](#burning-a-disc-image)) and **Dump…** (save the
+disc as an `.iso`). A data disc in the drive is mounted read-only and
+shared like any other drive.
+
 ### Partition rows (nested under each device)
 
 Every partition — mounted or not — appears as a nested row with its
@@ -365,6 +371,51 @@ normal.
 - Refused if the raw (uncompressed) upload is bigger than the target
 - Device is quarantined during the flash so partial partition tables
   don't fire race-conditions on the daemon
+
+## Burning a disc image
+
+Devices tab → **Burn…** on a USB optical drive. The dialog checks the
+disc first: what it is, and how much room an image gets.
+
+- **Blank** CD-R, DVD±R, BD-R (and blank rewritables): burned as they are.
+- **Rewritable** CD-RW, DVD±RW, DVD-RAM, BD-RE with data on them: erased
+  first. Type `ERASE` to confirm.
+- **Already written** write-once discs and pressed discs: refused. An
+  image has to start at the beginning of the disc.
+
+Pick a ready-made image: `.iso` / `.img` (ISO 9660, UDF, hybrid), or an
+`.iso.xz` / `.iso.gz`, decompressed on the Pi. Burning files and
+folders isn't supported: make the image first (for example with
+`xorriso -as mkisofs` or `hdiutil makehybrid`).
+
+**Write speed** lists the speeds the drive reports for the disc in it
+(for example 4x, 8x, 16x for a DVD). **Maximum**, the default, lets the
+drive go as fast as it can. A slower speed can give cheap or old discs
+a cleaner burn. The option is left out when the drive reports no
+speeds. The drive picks the nearest speed it supports.
+
+### What happens during a burn
+
+1. The upload is received **in full** into the Pi's burn cache
+   (decompressed on the way). Up to here nothing touches the disc:
+   cancel, or lose the connection, and the disc is still blank.
+2. The image is checked against the disc's capacity.
+3. The disc is unmounted, and `xorriso` burns the image in one
+   session (disc-at-once), blanking a rewritable disc as needed.
+4. **Verify** (on by default) reads the disc back and compares it with
+   the cached image, byte for byte. Drives that keep reporting the
+   empty disc's size get their tray reloaded once to re-read it.
+5. The cached image is deleted. The new disc is mounted and shared, or,
+   with **Eject when done**, the tray opens.
+
+Caching first is what makes a burn reliable over Wi-Fi: a write-once
+disc can't take a stalled upload halfway through, and the drive is fed
+from local storage at its own pace. It means the Pi needs room for the
+image; see [Burning disc images](/install#burning-disc-images) in the
+install guide for where the cache lives.
+
+Once the burn has started it runs to the end even if you close the
+dialog or the app, like a flash.
 
 ## Physical eject button + LED (optional)
 

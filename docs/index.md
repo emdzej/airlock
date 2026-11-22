@@ -26,7 +26,7 @@ features:
   - title: Plug and share
     details: Insert any USB thumb drive, SD card, or external SSD — Airlock auto-mounts and exposes it as an SMB share. Reachable from Finder, Explorer, and GNOME Files without any client-side config.
   - title: Web + native apps
-    details: Browse files, check drive health (SMART), format drives, flash and dump images, run fsck, and relabel volumes from the built-in web UI, or from the Mac and iPhone/iPad apps, which add silent mount on the Mac and Files integration on iOS.
+    details: Browse files, check drive health (SMART), format drives, flash and dump images, burn discs, run fsck, and relabel volumes from the built-in web UI, or from the Mac and iPhone/iPad apps, which add silent mount on the Mac and Files integration on iOS.
   - title: Read-only appliance
     details: Ships as a custom pi-gen image with a read-only root filesystem, tmpfs logs, seccomp-hardened systemd unit, and optional BadUSB / Wi-Fi / boot-time hardening.
   - title: Zero-config discovery
